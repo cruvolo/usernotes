@@ -11,14 +11,15 @@ The reddit moderator toolbox has a way to store information about a user, and
 share it between all the moderators.  Usernotes are written to the subreddit's
 wiki, which is used as a shared data repository.  The usernotes are written to
 the subreddit's wiki at the following URL:
-`https://www.reddit.com/r/<subreddit>/wiki/usernotes` The dats is written in a
-json format with base64 encoding and some compression. Read the toolbox source
-code (see below) for details.
+`https://www.reddit.com/r/<subreddit>/wiki/usernotes` The data is written in a
+json format with base64 encoding and some compression. See
+`usernotes-storage.md` for details.
 
 ## Reference 
 
 These programs must make reasonable attempts to match existing functionality in
-toolbox.  To do so, the user's browser cookies may be needed.
+toolbox.  To do so, the user's browser cookies may be needed.  See
+`browser-cookies.md`.
 
 As such, the repositories of reddit toolbox and yt-dlp are available in the
 following locations relative to this file:
@@ -91,10 +92,11 @@ creating the codebase.
 
 ## Cookies
 
-When you need cookies to test in a non-destructive manner, let me know how to retrieve them for you.
+When you need cookies to test in a non-destructive manner, let the user know
+how to retrieve them for you.
 
 ## Testing
 
 ALL TESTING MUST BE NON-DESTRUCTIVE!!!  Assume you are working with a
-production datastore.
+production datastore and production reddit instance.
 
