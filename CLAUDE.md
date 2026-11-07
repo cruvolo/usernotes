@@ -143,8 +143,8 @@ All of them take `--cookies-from-browser` / `--cookies FILE` for a session, and
 needs are in `usernotes.model` and `usernotes.format`, and `cli.py` is where it
 goes.
 
-`usernotes read` has been run against a real subreddit's notes, from Firefox
-cookies, and works.  Nothing else here has.
+`usernotes read` and `add` have been run against a real subreddit's notes, from
+Firefox cookies, and both work.  Nothing else here has.
 
 ## Cookies
 
