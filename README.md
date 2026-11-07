@@ -62,9 +62,9 @@ usernotes [-v|-q] [connection options] COMMAND [options] ...
 
 Names are matched ignoring case and the `u/` prefix, and so are subreddit names
 (`toolbox` and `/r/toolbox` are the same).  Every command reads or writes the
-subreddit's wiki page, so every command needs a session: the options that say
-where to get one, and which reddit to talk to, are **global** - like `-v` and
-`-q`, they go before the command rather than after it.  See
+same wiki page, and a session is nearly always needed for that, so the options
+that say where to get one - and which reddit to talk to - are **global**: like
+`-v` and `-q`, they go before the command rather than after it.  See
 [Cookies](#cookies) below.
 
 ### Reading

@@ -678,9 +678,10 @@ def _connection_options(parser):
     """Add the options that say how to reach reddit, to the top level parser.
 
     These are global, like ``-v`` and ``-q``: every command reads or writes
-    the subreddit's wiki page, so every command needs a session, and there is
-    no command that would not take them.  Passing them before the command
-    says so, and saves repeating them in each command's help.
+    the subreddit's wiki page, and a session is nearly always needed to do it
+    (a subreddit's usernotes are moderators-only unless it has said otherwise),
+    so every command takes them.  Passing them before the command says so,
+    and saves repeating three options in each command's help.
 
     A bad browser specification is rejected here, while the arguments are
     being read, so that it is a usage error rather than a failure halfway
