@@ -65,6 +65,7 @@ __all__ = [
     'color_index',
     'format_time',
     'relative_time',
+    'render_note_types',
     'render_user_notes',
     'safe_text',
 ]
@@ -340,6 +341,39 @@ def render_user_notes(username, notes, *, subreddit, note_types=(), style=None,
     for author, text in rows:
         padding = ' ' * (width - len(author.plain))
         lines.append(f'{author.styled}{padding}  {text.styled}'.rstrip())
+    return '\n'.join(lines) + '\n'
+
+
+def render_note_types(note_types, *, subreddit, style=None):
+    """Render a subreddit's note types - its flags - as a list to pick from.
+
+    This is what ``usernotes flags`` prints, so that a moderator can see what
+    ``usernotes add --flag`` accepts without going to the subreddit's toolbox
+    config page: the flag as it is written, the colour it will be shown in, and
+    the key or name to pass (either works, and neither is case sensitive).
+
+    :param note_types: the subreddit's `usernotes.format.NoteType` table, as
+        `usernotes.store.UsernotesStore.note_types` returns it.
+    :param subreddit: the subreddit they belong to.
+    :param style: a `Style`; colour is off when this is not given.
+    :returns: the text to print, newline terminated.
+    """
+    style = Style() if style is None else style
+    subreddit = safe_text(subreddit)
+    types = list(note_types)
+    lines = [style.bold(f'Usernote flags - /r/{subreddit}')]
+    if not types:
+        lines.append(style.color(MUTED, f'/r/{subreddit} - no flags'))
+        return '\n'.join(lines) + '\n'
+
+    names = [safe_text(note_type.text) for note_type in types]
+    width = max(len(name) for name in names)
+    lines.append('')
+    lines.append(f'{"Flag":<{width}}  Key')
+    for name, note_type in zip(names, types):
+        color = style.color(color_index(note_type.color), name)
+        key = style.color(MUTED, safe_text(note_type.key))
+        lines.append(f'{color}{" " * (width - len(name))}  {key}'.rstrip())
     return '\n'.join(lines) + '\n'
 
 

@@ -19,10 +19,11 @@ from usernotes.display import (
     color_index,
     format_time,
     relative_time,
+    render_note_types,
     render_user_notes,
     safe_text,
 )
-from usernotes.format import DEFAULT_NOTE_TYPES, Note
+from usernotes.format import DEFAULT_NOTE_TYPES, Note, NoteType
 
 UTC = datetime.timezone.utc
 
@@ -348,6 +349,42 @@ class RenderTests(unittest.TestCase):
     def test_the_username_is_escaped(self):
         listing = render_user_notes('a\x1b[31mb', [], subreddit='test')
         self.assertIn('User Notes - /u/a[31mb', listing)
+
+
+class NoteTypeListingTests(unittest.TestCase):
+    """The list of flags a subreddit offers, for ``usernotes flags``."""
+
+    def test_every_flag_is_listed_with_the_key_to_pass(self):
+        lines = render_note_types(DEFAULT_NOTE_TYPES, subreddit='test').splitlines()
+        self.assertEqual(lines[0], 'Usernote flags - /r/test')
+        self.assertEqual(lines[1], '')
+        self.assertEqual(lines[2].split(), ['Flag', 'Key'])
+        self.assertEqual(len(lines), 3 + len(DEFAULT_NOTE_TYPES))
+        for note_type in DEFAULT_NOTE_TYPES:
+            self.assertTrue(any(line.endswith(note_type.key) for line in lines[3:]),
+                            f'{note_type.key} is missing')
+
+    def test_the_columns_line_up(self):
+        lines = render_note_types(DEFAULT_NOTE_TYPES, subreddit='test').splitlines()
+        starts = {len(line) - len(line.split()[-1]) for line in lines[2:]}
+        self.assertEqual(len(starts), 1, lines)
+
+    def test_each_flag_is_shown_in_the_colour_given_to_it(self):
+        listing = render_note_types(DEFAULT_NOTE_TYPES, subreddit='test',
+                                    style=Style(True))
+        self.assertIn('\x1b[38;5;34mGood Contributor\x1b[0m', listing)   # green
+        self.assertIn('\x1b[38;5;201mSpam Watch\x1b[0m', listing)        # fuchsia
+        self.assertIn('\x1b[38;5;248mgooduser\x1b[0m', listing)          # grey key
+
+    def test_a_flag_name_is_escaped_like_everything_else(self):
+        types = (NoteType(key='odd', text='o\x1b[31mdd', color='fuchsia'),)
+        listing = render_note_types(types, subreddit='test')
+        self.assertIn('o[31mdd', listing)
+        self.assertNotIn('\x1b', listing)
+
+    def test_a_subreddit_with_no_flags_at_all(self):
+        self.assertEqual(render_note_types((), subreddit='test').splitlines(),
+                         ['Usernote flags - /r/test', '/r/test - no flags'])
 
 
 if __name__ == '__main__':
