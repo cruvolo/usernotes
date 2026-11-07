@@ -863,6 +863,19 @@ class FailureTests(CliTestCase):
         self.assertEqual(status, EXIT_ERROR)
         self.assertIn('none of the cookies that were loaded apply to', err)
 
+    def test_cookies_without_a_session_are_reported_before_the_request(self):
+        # What a browser store that was only partly decrypted leaves behind:
+        # reddit cookies, but not the one that identifies the session.  Reddit
+        # answers such a request with a bare 403, so the tool says what it can
+        # see before making it.
+        path = self.write_cookies('csv=1', 'edgebucket=xyz')
+        status, _, err = self.run_cli('-v', 'read', SUBREDDIT, 'alice', cookies=path)
+        self.assertEqual(status, EXIT_ERROR)
+        self.assertIn('do not include reddit_session', err)
+        self.assertIn('found: csv, edgebucket', err)
+        self.assertIn('chromium+gnomekeyring', err)
+        self.assertNotIn('xyz', err)
+
     def test_a_page_that_is_not_a_usernotes_store(self):
         self.reddit.pages[('test', 'usernotes')] = 'not json at all'
         status, _, err = self.read(SUBREDDIT, 'alice')

@@ -40,7 +40,12 @@ Four things are worth knowing before reading the code:
   either, the request goes out anonymously, which can only read a subreddit
   whose usernotes page is public - and toolbox's are moderator-only.
   Extraction happens before the first request, and a jar is never printed or
-  logged, only the *names* of the cookies that were found.
+  logged, only the *names* of the cookies that were found - which is also how a
+  jar that cannot be used says so: a browser store whose values could not be
+  decrypted (chromium on a desktop it does not recognise needs
+  ``BROWSER+KEYRING``, see `usernotes.cookies`) yields cookies for reddit that
+  do not include ``reddit_session``, and that is reported before the request
+  rather than as a refusal from reddit afterwards.
 
   They are global options, with ``--base-url``, because every command reads or
   writes the same wiki page and so every command needs them: they are given
@@ -118,6 +123,13 @@ _LOG_LEVELS = ('warning', 'info', 'debug')
 #: a note that should not.  ``none`` is what toolbox's own dialog calls the
 #: untyped selection.
 _NO_FLAG = ('none', '-')
+
+#: The cookie a logged-in reddit session carries.  Toolbox reads the same one
+#: (``extension/data/background/handlers/cache.js``, and ``webrequest.js``
+#: listens for it), so a jar without it cannot make an authenticated request -
+#: which is worth saying before the request goes out, because reddit answers it
+#: with a bare 403 that looks like a permissions problem.
+SESSION_COOKIE = 'reddit_session'
 
 #: The shapes of link that survive a save: the squashed ``l,<id>`` an older
 #: store holds, and anything `usernotes.format.squash_link` can reduce.  A link
@@ -691,7 +703,11 @@ def _connection_options(parser):
         '--cookies-from-browser', metavar=BROWSER_SPEC_METAVAR,
         type=_checked(parse_browser_spec), default=None,
         help='take the reddit session cookies from a browser, as yt-dlp does; '
-             'the browser must be logged in to reddit')
+             'the browser must be logged in to reddit.  A chromium store on '
+             'linux is encrypted with a key held in the desktop keyring, which '
+             'is worked out from the desktop environment and can be named '
+             'instead, after a "+" - chromium+gnomekeyring, or +kwallet, '
+             '+kwallet5, +kwallet6, +basictext')
     parser.add_argument(
         '--cookies', metavar='FILE', default=None,
         help='take the reddit session cookies from a Netscape cookies.txt file, '
@@ -710,7 +726,10 @@ def _load_cookies(args, logger, base_url):
     :param base_url: the origin the request will go to, so that a jar which
         holds nothing for it - the wrong browser profile is the usual cause -
         is reported before the request is made rather than as a puzzling
-        refusal from reddit.
+        refusal from reddit.  So is a jar that holds cookies for reddit but not
+        the session, which is what a browser store whose values could not be
+        decrypted leaves behind (`reddit_session` is the cookie toolbox reads
+        too, in ``extension/data/background/handlers/cache.js``).
     :raises usernotes.cookies.CookieLoadError: if a source was given but could
         not be read, which main() reports and turns into `EXIT_ERROR`.
     """
@@ -718,9 +737,17 @@ def _load_cookies(args, logger, base_url):
         logger.info('no cookies given: reading reddit without a session')
         return None
     jar = load_cookie_jar(args.cookies_from_browser, args.cookies, logger=logger)
-    if not cookie_names(jar, base_url):
+    names = cookie_names(jar, base_url)
+    if not names:
         logger.warning(f'none of the cookies that were loaded apply to {base_url}; '
                        'the request will be anonymous')
+    elif SESSION_COOKIE not in names:
+        logger.warning(
+            f'the cookies loaded for {base_url} do not include {SESSION_COOKIE} '
+            f'(found: {", ".join(names)}), so the request will be anonymous; a '
+            'chromium store that could only be partly decrypted looks like '
+            'this, and needs the browser named with its keyring - '
+            'BROWSER+KEYRING, e.g. chromium+gnomekeyring')
     return jar
 
 
