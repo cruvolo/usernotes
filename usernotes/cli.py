@@ -74,12 +74,16 @@ from .display import (
     COLOR_MODES,
     Style,
     color_enabled,
+    parse_time,
+    render_note,
     render_note_types,
+    render_search_results,
     render_user_notes,
 )
 from .errors import ForbiddenError, NotLoggedInError, UsernotesError
 from .format import note_type
 from .model import normalize_username
+from .search import matcher, search as search_notes
 from .store import UsernotesStore, normalize_subreddit
 
 __all__ = [
@@ -220,6 +224,72 @@ def backup(args, logger, client_options):
     return EXIT_OK
 
 
+def search(args, logger, client_options):
+    """``usernotes search``: find notes by user, text, flag or time."""
+    try:
+        matches = matcher(args.pattern, regex=args.regex,
+                          ignore_case=not args.case_sensitive)
+    except ValueError as err:
+        # A pattern that will not compile is worth saying so about before any
+        # notes are fetched to match it against.
+        _complain(str(err))
+        return EXIT_ERROR
+
+    with _store(args, logger, client_options) as store:
+        store.load()
+        # The type table is a second request, and only worth making when there
+        # are notes whose flags it could name, or match.
+        note_types = store.note_types() if store.note_count() else ()
+        found = search_notes(store.users.items(), matches, note_types=note_types)
+        if args.json:
+            print(json.dumps(
+                {'subreddit': store.subreddit,
+                 'page': store.page,
+                 'pattern': args.pattern,
+                 'regex': args.regex,
+                 'count': len(found),
+                 'matches': [{'user': username, **note.as_dict()}
+                             for username, note in found]},
+                indent=2, ensure_ascii=False))
+            return EXIT_OK
+        print(render_search_results(
+            args.pattern, found,
+            subreddit=store.subreddit,
+            note_types=note_types if found else (),
+            style=Style(color_enabled(args.color)),
+            tz=None if args.local else datetime.timezone.utc,
+            has_page=store.exists), end='')
+    return EXIT_OK
+
+
+def remove(args, logger, client_options):
+    """``usernotes remove``: delete one of a user's notes."""
+    with _store(args, logger, client_options) as store:
+        store.load()
+        removed = store.remove(args.username, _note_to_remove(args, store).time)
+        store.save()
+        # As with `add`, what is shown afterwards is read back from the wiki:
+        # it is the remaining notes as reddit now holds them, which is also the
+        # proof that the note went.
+        store.reload()
+        user = store.find(args.username)
+        notes = () if user is None else tuple(user.notes)
+        name = args.username if user is None else user.name
+
+        if args.json:
+            document = _as_json(store, name, user, notes)
+            document['removed'] = removed.as_dict()
+            print(json.dumps(document, indent=2, ensure_ascii=False))
+            return EXIT_OK
+
+        print(render_note(removed, note_types=store.note_types(),
+                          style=Style(color_enabled(args.color)),
+                          tz=None if args.local else datetime.timezone.utc))
+        print()
+        _show(store, args, args.username)
+    return EXIT_OK
+
+
 def restore(args, logger, client_options):
     """``usernotes restore``: write a backup file back to the wiki."""
     with _store(args, logger, client_options) as store:
@@ -265,6 +335,20 @@ def _link(value):
     raise argparse.ArgumentTypeError(
         f'not a reddit link: {value!r} (expected an absolute URL, a path such as '
         '/r/toolbox/comments/abc123/, or a squashed l,<id> from an older store)')
+
+
+def _pattern(value):
+    """An argparse ``type`` for a search pattern.
+
+    Whitespace around it goes - a pattern is typed, not copied, and a stray
+    leading space would make a search quietly miss everything - but a pattern
+    that is only whitespace is refused rather than searched for, since it would
+    match every note there is.
+    """
+    pattern = value.strip()
+    if not pattern:
+        raise argparse.ArgumentTypeError('the pattern is empty')
+    return pattern
 
 
 def _readable_file(value):
@@ -327,6 +411,8 @@ def build_parser():
     _read_command(commands)
     _add_command(commands)
     _flags_command(commands)
+    _search_command(commands)
+    _remove_command(commands)
     _backup_command(commands)
     _restore_command(commands)
     return parser
@@ -410,6 +496,81 @@ def _flags_command(commands):
         'print the flags as JSON instead of the listing, for scripts: '
         'subreddit and flags[] (key, text, color)'))
     parser.set_defaults(run=flags)
+    return parser
+
+
+def _search_command(commands):
+    parser = commands.add_parser(
+        'search',
+        help="search a subreddit's usernotes",
+        description=(
+            'Print every note on /r/SUBREDDIT that PATTERN matches, each with the\n'
+            'user it belongs to: the username, the note text, its flag and its\n'
+            'timestamp are all searched, and a note is shown if any of them\n'
+            'matches.  Matching ignores case and finds the pattern anywhere in a\n'
+            'field - which is what toolbox\'s own search boxes do - and --regex\n'
+            'makes PATTERN a regular expression instead of a substring.'),
+        epilog=(
+            'examples:\n'
+            '  usernotes search toolbox spam --cookies-from-browser firefox\n'
+            '  usernotes search toolbox "^spam watch" --regex\n'
+            '  usernotes search toolbox 2026-11-04        # notes from that day\n'
+            '  usernotes search toolbox alice --json | jq -r \'.matches[].type\'\n'),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        parents=[_connection_options()])
+    _subreddit_argument(parser)
+    parser.add_argument('pattern', metavar='PATTERN', type=_pattern,
+                        help='what to look for: a substring, or a regular '
+                             'expression with --regex (surrounding whitespace is '
+                             'ignored)')
+    parser.add_argument('-E', '--regex', action='store_true',
+                        help='read PATTERN as a regular expression, matched '
+                             'anywhere in a field')
+    parser.add_argument('--case-sensitive', action='store_true',
+                        help='match case, where the default ignores it')
+    _output_arguments(parser, times=True, json_help=(
+        'print the matches as JSON instead of the listing, for scripts: '
+        'subreddit, page, pattern, regex, count and matches[] (each with the '
+        'user and the note fields)'))
+    parser.set_defaults(run=search)
+    return parser
+
+
+def _remove_command(commands):
+    parser = commands.add_parser(
+        'remove',
+        help="delete a note from a user's usernotes",
+        description=(
+            "Delete one of USERNAME's notes on /r/SUBREDDIT - the one named by\n"
+            '--newest, by --oldest, or by --timestamp - and then print the notes\n'
+            'they have left, read back from the wiki.  The page is written as a\n'
+            'new revision: reddit keeps the history, so the note can be put back\n'
+            'there, or with `usernotes restore` from a backup.'),
+        epilog=(
+            'examples:\n'
+            '  usernotes remove toolbox alice --newest --cookies-from-browser firefox\n'
+            '  usernotes remove toolbox alice --oldest --cookies cookies.txt\n'
+            '  usernotes remove toolbox alice --timestamp "2026-11-05 06:11:20 UTC"\n'
+            '\n'
+            '--timestamp takes a time as `usernotes read` prints it, so one can be\n'
+            'copied out of the middle of a listing - "3 days ago (2026-11-05\n'
+            '06:11:20 UTC)" - and name the note it belongs to.'),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        parents=[_connection_options()])
+    _subject_arguments(parser)
+    which = parser.add_mutually_exclusive_group(required=True)
+    which.add_argument('--newest', action='store_true',
+                       help="the user's newest note")
+    which.add_argument('--oldest', action='store_true',
+                       help="the user's oldest note")
+    which.add_argument('--timestamp', metavar='TIME', type=_checked(parse_time),
+                       help='the note written at this time, as `usernotes read` '
+                            'prints it, e.g. "2026-11-05 06:11:20 UTC"')
+    _output_arguments(parser, times=True, json_help=(
+        'print the removed note and the notes left as JSON, for scripts: the '
+        'same document as `read --json`, with the note that was deleted under '
+        '"removed"'))
+    parser.set_defaults(run=remove)
     return parser
 
 
@@ -615,6 +776,32 @@ def _flag(args, store, logger):
     logger.info(f'carrying over the flag {recent!r} from an earlier note on '
                 f'u/{args.username}')
     return recent
+
+
+def _note_to_remove(args, store):
+    """The note `remove` was asked for, by whichever selector was given.
+
+    A note's identity is its time: the stored format has nothing else to go on,
+    and toolbox identifies notes the same way (``Math.trunc(note.time / 1000)``
+    is its note id), so a timestamp names exactly one note.  ``--newest`` and
+    ``--oldest`` are for a moderator who has not read a time off a listing yet;
+    they follow the order the store holds, which is newest first, so a note
+    whose time the store lost sorts last and is what ``--oldest`` finds.
+
+    :raises usernotes.errors.UserNotFoundError: if the user has no notes.
+    :raises usernotes.errors.NoteNotFoundError: if no note has that timestamp.
+    """
+    user = store.require(args.username)
+    if args.newest:
+        return user.notes[0]
+    if args.oldest:
+        return user.notes[-1]
+    return user.require(_milliseconds(args.timestamp))
+
+
+def _milliseconds(moment):
+    """An aware `datetime` in the milliseconds `usernotes.format.Note` holds."""
+    return int(moment.timestamp() * 1000)
 
 
 def _client_options(args, client_options):

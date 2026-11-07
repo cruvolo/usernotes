@@ -458,6 +458,207 @@ class FlagsTests(CliTestCase):
                           if record.method != 'GET'], [])
 
 
+class SearchCommandTests(CliTestCase):
+    """``usernotes search``: finding notes by what is known about them."""
+
+    def search(self, *argv):
+        return self.run_cli('search', *argv, '--cookies', self.cookies)
+
+    def test_finds_a_note_by_its_text(self):
+        status, out, err = self.search(SUBREDDIT, 'banned for abuse')
+        self.assertEqual(status, EXIT_OK)
+        self.assertEqual(err, '')
+        self.assertIn("Usernotes matching 'banned for abuse' - /r/test", out)
+        self.assertIn('1 note for 1 user', out)
+        self.assertIn('banned for abuse', out)
+        self.assertNotIn('spam watch, again', out)
+
+    def test_finds_notes_by_their_user(self):
+        status, out, _ = self.search(SUBREDDIT, 'alice')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('2 notes for 1 user', out)
+
+    def test_finds_a_note_by_its_flag_key_or_the_name_shown(self):
+        for pattern in ('spamwatch', 'Spam Watch', 'spam watch'):
+            with self.subTest(pattern=pattern):
+                out = self.search(SUBREDDIT, pattern)[1]
+                self.assertIn('spam watch, again', out)
+                self.assertNotIn('banned for abuse', out)
+
+    def test_finds_a_note_by_its_timestamp(self):
+        # A date finds the notes of that day, which is what a moderator has.
+        day = datetime.datetime.fromtimestamp(NOW - 400 * DAY,
+                                              datetime.timezone.utc)
+        status, out, _ = self.search(SUBREDDIT, day.strftime('%Y-%m-%d'))
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('banned for abuse', out)
+        self.assertNotIn('spam watch, again', out)
+
+    def test_a_regular_expression(self):
+        status, out, _ = self.search(SUBREDDIT, r'^banned', '--regex')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('banned for abuse', out)
+
+    def test_matching_ignores_case_unless_asked_otherwise(self):
+        self.assertIn('banned for abuse', self.search(SUBREDDIT, 'BANNED')[1])
+        self.assertIn('no notes match',
+                      self.search(SUBREDDIT, 'BANNED', '--case-sensitive')[1])
+
+    def test_a_regex_that_does_not_compile_fails_before_any_request(self):
+        status, out, err = self.search(SUBREDDIT, 'banned(', '--regex')
+        self.assertEqual(status, EXIT_ERROR)
+        self.assertEqual(out, '')
+        self.assertIn('not a regular expression', err)
+        self.assertEqual(self.reddit.requests, [])
+
+    def test_nothing_matching_is_not_an_error(self):
+        status, out, err = self.search(SUBREDDIT, 'nothing here at all')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('no notes match', out)
+        self.assertEqual(err, '')
+
+    def test_a_subreddit_with_no_page(self):
+        self.start_reddit(pages={})
+        status, out, _ = self.search('empty', 'spam')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('no usernotes page yet', out)
+
+    def test_a_flag_is_shown_in_its_colour(self):
+        out = self.search(SUBREDDIT, 'spam watch', '--color', 'always')[1]
+        self.assertIn('\x1b[38;5;201m[Spam Watch]\x1b[0m', out)
+
+    def test_json(self):
+        status, out, _ = self.search(SUBREDDIT, 'banned for abuse', '--json')
+        self.assertEqual(status, EXIT_OK)
+        document = json.loads(out)
+        self.assertEqual(document['subreddit'], 'test')
+        self.assertEqual(document['pattern'], 'banned for abuse')
+        self.assertFalse(document['regex'])
+        self.assertEqual(document['count'], 1)
+        match = document['matches'][0]
+        self.assertEqual(match['user'], 'alice')
+        self.assertEqual(match['text'], 'banned for abuse')
+        self.assertEqual(match['type'], 'ban')
+
+    def test_searching_writes_nothing(self):
+        self.search(SUBREDDIT, 'spam')
+        self.assertEqual([record.method for record in self.reddit.requests
+                          if record.method != 'GET'], [])
+
+    def test_the_pattern_is_required_and_may_not_be_empty(self):
+        self.assertIn('PATTERN', self.usage_error('search', SUBREDDIT))
+        self.assertIn('the pattern is empty',
+                      self.usage_error('search', SUBREDDIT, '   '))
+
+
+class RemoveCommandTests(CliTestCase):
+    """``usernotes remove``: taking one note away."""
+
+    def remove(self, *argv):
+        return self.run_cli('remove', *argv, '--cookies', self.cookies)
+
+    def stored(self, username='alice'):
+        page = fmt.parse_page(self.reddit.page(SUBREDDIT), SUBREDDIT)
+        return page.users.get(username, ())
+
+    def edits(self):
+        return self.reddit.requests_to(f'/r/{SUBREDDIT}/api/wiki/edit', method='POST')
+
+    def test_removes_the_newest_note(self):
+        status, out, err = self.remove(SUBREDDIT, 'alice', '--newest')
+        self.assertEqual(status, EXIT_OK)
+        self.assertEqual(err, '')
+        # The note that went, on its own line, then the notes that are left,
+        # read back from the wiki.
+        self.assertIn('spam watch, again', out.splitlines()[0])
+        self.assertIn('User Notes - /u/alice', out)
+        self.assertIn('/r/test - 1 note', out)
+        self.assertEqual([note.text for note in self.stored()], ['banned for abuse'])
+
+    def test_removes_the_oldest_note(self):
+        status, out, _ = self.remove(SUBREDDIT, 'alice', '--oldest')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('banned for abuse', out.splitlines()[0])
+        self.assertEqual([note.text for note in self.stored()], ['spam watch, again'])
+
+    def test_the_timestamp_can_be_copied_out_of_a_listing(self):
+        # The whole point of the option: read a listing, copy the time out of
+        # the middle of it - "2 minutes ago (2026-11-07 07:23:00 UTC)" - and
+        # name that note with it.
+        listing = self.read(SUBREDDIT, 'alice')[1]
+        stamp = listing.split('(', 1)[1].split(')', 1)[0]
+        self.assertEqual(stamp, utc(NOW - 60))
+
+        status, out, _ = self.remove(SUBREDDIT, 'alice', '--timestamp', stamp)
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('spam watch, again', out.splitlines()[0])
+        self.assertEqual([note.text for note in self.stored()], ['banned for abuse'])
+
+    def test_the_timestamp_may_be_written_in_iso_8601(self):
+        stamp = datetime.datetime.fromtimestamp(
+            NOW - 60, datetime.timezone.utc).isoformat()
+        status, _, _ = self.remove(SUBREDDIT, 'alice', '--timestamp', stamp)
+        self.assertEqual(status, EXIT_OK)
+        self.assertEqual([note.text for note in self.stored()], ['banned for abuse'])
+
+    def test_a_timestamp_that_matches_no_note(self):
+        status, out, err = self.remove(SUBREDDIT, 'alice', '--timestamp',
+                                       '2020-01-01 00:00:00 UTC')
+        self.assertEqual(status, EXIT_ERROR)
+        self.assertEqual(out, '')
+        self.assertIn('no note with time', err)
+        # The times they do have are named the way a listing names them.
+        self.assertIn(utc(NOW - 60), err)
+        self.assertEqual(self.edits(), [])
+
+    def test_a_timestamp_that_is_not_one_is_a_usage_error(self):
+        self.assertIn('not a timestamp',
+                      self.usage_error('remove', SUBREDDIT, 'alice',
+                                       '--timestamp', 'yesterday'))
+
+    def test_a_user_with_no_notes(self):
+        status, out, err = self.remove(SUBREDDIT, 'nobody', '--newest')
+        self.assertEqual(status, EXIT_ERROR)
+        self.assertEqual(out, '')
+        self.assertIn('no notes stored for user', err)
+        self.assertEqual(self.edits(), [])
+
+    def test_the_note_has_to_be_named_by_exactly_one_selector(self):
+        self.assertIn('required', self.usage_error('remove', SUBREDDIT, 'alice'))
+        self.assertIn('not allowed with',
+                      self.usage_error('remove', SUBREDDIT, 'alice',
+                                       '--newest', '--oldest'))
+
+    def test_removing_the_last_note_takes_the_user_with_it(self):
+        self.remove(SUBREDDIT, 'alice', '--newest')
+        status, out, _ = self.remove(SUBREDDIT, 'alice', '--newest')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('no notes for /u/alice', out)
+        page = fmt.parse_page(self.reddit.page(SUBREDDIT), SUBREDDIT)
+        self.assertNotIn('alice', page.users)
+
+    def test_the_revision_says_what_was_deleted(self):
+        self.remove(SUBREDDIT, 'alice', '--newest')
+        reason = self.edits()[-1].form['reason']
+        self.assertIn('delete note', reason)
+        self.assertIn(utc(NOW - 60), reason)        # a time, not a number
+        self.assertIn('usernotes-cli', reason)
+
+    def test_the_notes_shown_afterwards_are_read_back_from_the_wiki(self):
+        self.remove(SUBREDDIT, 'alice', '--newest')
+        self.assertEqual(len(self.requests_to('usernotes')), 3)
+        self.assertEqual(len(self.edits()), 1)
+
+    def test_json(self):
+        status, out, _ = self.remove(SUBREDDIT, 'alice', '--newest', '--json')
+        self.assertEqual(status, EXIT_OK)
+        document = json.loads(out)
+        self.assertEqual(document['name'], 'alice')
+        self.assertEqual(document['removed']['text'], 'spam watch, again')
+        self.assertEqual([note['text'] for note in document['notes']],
+                         ['banned for abuse'])
+
+
 class BackupCommandTests(CliTestCase):
     """``usernotes backup``: the whole page into a file, verbatim."""
 
@@ -740,7 +941,8 @@ class HelpTests(CliTestCase):
 
     def test_the_top_level_help(self):
         text = self.output('--help')
-        for command in ('read', 'add', 'flags', 'backup', 'restore'):
+        for command in ('read', 'add', 'flags', 'search', 'remove', 'backup',
+                        'restore'):
             self.assertIn(command, text)
         self.assertIn('--cookies-from-browser', text)
         self.assertIn('--verbose', text)
@@ -772,6 +974,22 @@ class HelpTests(CliTestCase):
         self.assertIn('SUBREDDIT', text)
         self.assertIn('--json', text)
         self.assertIn('--color', text)
+
+    def test_the_help_for_searching(self):
+        text = self.output('search', '--help')
+        self.assertIn('SUBREDDIT', text)
+        self.assertIn('PATTERN', text)
+        self.assertIn('--regex', text)
+        self.assertIn('--case-sensitive', text)
+        self.assertIn('--json', text)
+
+    def test_the_help_for_removing(self):
+        text = self.output('remove', '--help')
+        self.assertIn('SUBREDDIT', text)
+        self.assertIn('USERNAME', text)
+        for option in ('--newest', '--oldest', '--timestamp'):
+            self.assertIn(option, text)
+        self.assertIn('--json', text)
 
     def test_the_help_for_backing_up(self):
         text = self.output('backup', '--help')
