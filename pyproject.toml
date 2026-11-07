@@ -22,4 +22,4 @@ gnome-keyring = ["secretstorage>=3.3"]
 packages = ["usernotes", "usernotes._vendor"]
 
 [tool.setuptools.dynamic]
-version = {attr = "usernotes.__version__"}
+version = {attr = "usernotes._version.__version__"}

@@ -111,8 +111,8 @@ import dataclasses
 import os
 import re
 
+from ._logging import Logger, NULL_LOGGER, NullLogger, resolve_logger  # noqa: F401  (public facade)
 from ._vendor import browser_cookies as _bc
-from ._vendor._compat import Logger, NULL_LOGGER, NullLogger  # noqa: F401  (public facade)
 
 __all__ = [
     'BROWSER_SPEC_METAVAR',
@@ -287,7 +287,7 @@ def load_cookie_jar(from_browser=None, cookie_file=None, *, logger=None):
     elif from_browser is not None and not isinstance(from_browser, BrowserSpec):
         raise ValueError(f'invalid browser specification: {from_browser!r}')
 
-    logger = _resolve_logger(logger)
+    logger = resolve_logger(logger)
     try:
         return _bc.load_cookies(
             None if cookie_file is None else os.fspath(cookie_file),
@@ -326,17 +326,6 @@ def cookie_names(jar, url=REDDIT_ORIGIN):
     in".
     """
     return tuple(sorted({cookie.name for cookie in jar.get_cookies_for_url(url)}))
-
-
-def _resolve_logger(logger):
-    if logger is None:
-        return Logger()
-    for name in ('debug', 'info', 'warning', 'error'):
-        if not callable(getattr(logger, name, None)):
-            raise ValueError(
-                f'invalid logger {logger!r}: no {name}() method '
-                '(a logger must provide debug(), info(), warning() and error())')
-    return logger
 
 
 # Grammar from yt-dlp, which accepts `BROWSER[+KEYRING][:PROFILE][::CONTAINER]`.
