@@ -7,15 +7,15 @@ This is the front end over the rest of the package: it turns arguments into a
 `usernotes.store.UsernotesStore`, prints what was asked for, and reports
 failures in a way a shell can act on.
 
-Three commands are implemented.  ``read`` prints one user's notes the way
+Five commands are implemented.  ``read`` prints one user's notes the way
 toolbox's "User Notes" dialog shows them - see `usernotes.display`; ``add``
 writes a note and then prints those notes again, read back from the wiki;
 ``flags`` lists the note types the subreddit defines, because nothing else
-would tell a moderator what ``add --flag`` accepts.  The library underneath
-them can already edit a subreddit's notes and back them up, so ``backup``,
-``restore`` and ``search`` are a matter of more commands here.
+would tell a moderator what ``add --flag`` accepts; ``backup`` saves the whole
+wiki page to a file; and ``restore`` puts such a file back.  ``search`` is a
+matter of one more command here.
 
-Three things are worth knowing before reading the code:
+Four things are worth knowing before reading the code:
 
 * **Adding is a read-modify-write of the whole page.**  The format has no
   smaller granularity, so `add` loads the page, adds to the copy and writes it
@@ -25,6 +25,15 @@ Three things are worth knowing before reading the code:
   all been checked, and the listing printed afterwards is read back from the
   wiki rather than from memory, so it is also the proof that the write landed.
 
+* **Restoring replaces the page.**  Unlike ``add``, which edits the page it
+  read, `restore` writes a backup file over whatever is there now, and that is
+  the one way to take notes away - so the file has to decode as a usernotes
+  page unless ``--force`` says otherwise, the page is read first so that what
+  is about to be replaced can be reported, and ``--dry-run`` says what would
+  happen without writing.  Reddit keeps the page's revision history, so a
+  restore is undone the way any other wiki edit is; ``backup`` first if the
+  notes as they stand are worth keeping.
+
 * **Cookies are a parameter everywhere in this package, and this is the layer
   that gets them.**  ``--cookies-from-browser`` (yt-dlp's grammar, see
   `usernotes.cookies`) and ``--cookies FILE`` are both optional; without
@@ -33,12 +42,13 @@ Three things are worth knowing before reading the code:
   Extraction happens before the first request, and a jar is never printed or
   logged, only the *names* of the cookies that were found.
 * **Exit statuses are the interface for scripts.**  ``0`` for a listing that
-  was printed or a note that was written, ``1`` for a request that failed, a
-  store that could not be read, or a write that was refused (the flag does not
-  exist, the page changed while the note was being added, the page is full),
-  ``2`` for a usage error (argparse's own).  A user with no notes is not an
-  error: the listing says so and the status stays ``0``, which is what toolbox
-  does with an empty dialog.
+  was printed, a note that was written or a file that was backed up or
+  restored; ``1`` for a request that failed, a store that could not be read, a
+  file that could not be read or written, or a write that was refused (the flag
+  does not exist, the page changed while the note was being added, the page is
+  full); ``2`` for a usage error (argparse's own).  A user with no notes is not
+  an error: the listing says so and the status stays ``0``, which is what
+  toolbox does with an empty dialog.
 """
 
 from __future__ import annotations
@@ -140,6 +150,13 @@ def main(argv=None, *, client_options=None):
         _complain('if the browser store cannot be read, export the cookies to a '
                   'file and pass --cookies FILE instead')
         return EXIT_ERROR
+    except OSError as err:
+        # A backup that cannot be written, or a restore file that cannot be
+        # read.  Requests to reddit come back as `usernotes.errors`, never as
+        # these, so anything here is the filesystem talking.
+        where = f'{err.filename}: ' if getattr(err, 'filename', None) else ''
+        _complain(f'{where}{err.strerror or err}')
+        return EXIT_ERROR
     except UsernotesError as err:
         _complain(str(err))
         if _no_cookies(args) and isinstance(err, (NotLoggedInError, ForbiddenError)):
@@ -192,6 +209,28 @@ def flags(args, logger, client_options):
     return EXIT_OK
 
 
+def backup(args, logger, client_options):
+    """``usernotes backup``: save the whole wiki page to a file."""
+    with _store(args, logger, client_options) as store:
+        result = store.backup(args.output, directory=args.directory)
+        if args.json:
+            print(json.dumps(result.as_dict(), indent=2, ensure_ascii=False))
+            return EXIT_OK
+        print(result.summary())
+    return EXIT_OK
+
+
+def restore(args, logger, client_options):
+    """``usernotes restore``: write a backup file back to the wiki."""
+    with _store(args, logger, client_options) as store:
+        result = store.restore(args.path, force=args.force, dry_run=args.dry_run)
+        if args.json:
+            print(json.dumps(result.as_dict(), indent=2, ensure_ascii=False))
+            return EXIT_OK
+        print(result.summary())
+    return EXIT_OK
+
+
 # -- arguments ---------------------------------------------------------------
 
 def _note_text(value):
@@ -226,6 +265,19 @@ def _link(value):
     raise argparse.ArgumentTypeError(
         f'not a reddit link: {value!r} (expected an absolute URL, a path such as '
         '/r/toolbox/comments/abc123/, or a squashed l,<id> from an older store)')
+
+
+def _readable_file(value):
+    """An argparse ``type`` for a file that has to be there to be read.
+
+    A file that is not there is a mistake in the command line, and saying so
+    before anything is sent to reddit beats a request that is only made to
+    come back with "no such file", or a traceback: whatever the file is
+    restored from is the one thing about a restore that cannot be undone.
+    """
+    if not os.path.isfile(value):
+        raise argparse.ArgumentTypeError(f'no such file: {value}')
+    return value
 
 
 def _checked(normalizer):
@@ -275,6 +327,8 @@ def build_parser():
     _read_command(commands)
     _add_command(commands)
     _flags_command(commands)
+    _backup_command(commands)
+    _restore_command(commands)
     return parser
 
 
@@ -356,6 +410,74 @@ def _flags_command(commands):
         'print the flags as JSON instead of the listing, for scripts: '
         'subreddit and flags[] (key, text, color)'))
     parser.set_defaults(run=flags)
+    return parser
+
+
+def _backup_command(commands):
+    parser = commands.add_parser(
+        'backup',
+        help="save a subreddit's usernotes to a file",
+        description=(
+            'Write the whole /r/SUBREDDIT usernotes page to a file, exactly as\n'
+            'reddit returns it: never re-encoded, so a page this tool cannot read\n'
+            'is still backed up whole, and the file is what `usernotes restore`\n'
+            'writes back.'),
+        epilog=(
+            'examples:\n'
+            '  usernotes backup toolbox --cookies-from-browser firefox\n'
+            '  usernotes backup toolbox --directory ~/usernotes-backups\n'
+            '  usernotes backup toolbox --output before-the-cleanup.json\n'),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        parents=[_connection_options()])
+    _subreddit_argument(parser)
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument('-o', '--output', metavar='FILE', default=None,
+                       help='the file to write; the default is '
+                            'usernotes_<subreddit>_<UTC timestamp>.json in the '
+                            'current directory')
+    where.add_argument('-d', '--directory', metavar='DIR', default=None,
+                       help='where to put that generated filename; created if it '
+                            'does not exist')
+    _output_arguments(parser, times=False, json_help=(
+        'print what was written as JSON instead of the one-line summary: path, '
+        'subreddit, taken_at, size, notes, users and warnings'))
+    parser.set_defaults(run=backup)
+    return parser
+
+
+def _restore_command(commands):
+    parser = commands.add_parser(
+        'restore',
+        help="write a backup file back to a subreddit's usernotes",
+        description=(
+            "Replace the /r/SUBREDDIT usernotes page with the contents of FILE, as\n"
+            'a new wiki revision.  The page is read first, so what is about to be\n'
+            'replaced is known and a file that holds fewer notes than the page does\n'
+            'is reported before anything is written; a file that does not decode as\n'
+            'a usernotes page is refused unless --force is given.  Reddit keeps the\n'
+            'page history, so a restore can be undone like any other edit - run\n'
+            '`usernotes backup` first if the notes as they stand are worth keeping.'),
+        epilog=(
+            'examples:\n'
+            '  usernotes restore toolbox usernotes_toolbox_20261107T061743Z.json \\\n'
+            '      --cookies-from-browser firefox\n'
+            '  usernotes restore toolbox backup.json --dry-run   # look first\n'),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        parents=[_connection_options()])
+    _subreddit_argument(parser)
+    parser.add_argument('path', metavar='FILE', type=_readable_file,
+                        help='the file to restore, as `usernotes backup` wrote it')
+    parser.add_argument('--force', action='store_true',
+                        help='restore a file that does not decode as a usernotes '
+                             'page, for putting back a backup of a page that was '
+                             'already damaged')
+    parser.add_argument('--dry-run', dest='dry_run', action='store_true',
+                        help='say what would be written and write nothing')
+    _output_arguments(parser, times=False, json_help=(
+        'print what was restored as JSON instead of the one-line summary: path, '
+        'subreddit, schema, size, notes, users, replaced_notes, replaced_users, '
+        'written, dry_run and warnings'))
+    parser.set_defaults(run=restore)
     return parser
 
 

@@ -458,6 +458,169 @@ class FlagsTests(CliTestCase):
                           if record.method != 'GET'], [])
 
 
+class BackupCommandTests(CliTestCase):
+    """``usernotes backup``: the whole page into a file, verbatim."""
+
+    def setUp(self):
+        super().setUp()
+        self.directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
+
+    def backup(self, *argv):
+        return self.run_cli('backup', *argv, '--cookies', self.cookies)
+
+    def test_writes_the_page_and_says_what_it_wrote(self):
+        path = os.path.join(self.directory, 'notes.json')
+        status, out, err = self.backup(SUBREDDIT, '--output', path)
+        self.assertEqual(status, EXIT_OK)
+        self.assertEqual(err, '')
+        with open(path) as handle:
+            self.assertEqual(handle.read(), self.reddit.page(SUBREDDIT))
+        self.assertIn(path, out)
+        self.assertIn('2 notes for 1 users', out)
+
+    def test_the_generated_name_goes_in_the_directory_asked_for(self):
+        status, out, _ = self.backup(SUBREDDIT, '--directory', self.directory)
+        self.assertEqual(status, EXIT_OK)
+        written = os.listdir(self.directory)
+        self.assertEqual(len(written), 1)
+        self.assertTrue(written[0].startswith(f'usernotes_{SUBREDDIT}_'), written)
+        self.assertTrue(written[0].endswith('.json'), written)
+        self.assertIn(written[0], out)
+
+    def test_a_subreddit_with_no_page_is_an_error(self):
+        self.start_reddit(pages={})
+        status, out, err = self.backup('empty')
+        self.assertEqual(status, EXIT_ERROR)
+        self.assertEqual(out, '')
+        self.assertIn('wiki page', err)
+
+    def test_json(self):
+        path = os.path.join(self.directory, 'notes.json')
+        status, out, _ = self.backup(SUBREDDIT, '--output', path, '--json')
+        self.assertEqual(status, EXIT_OK)
+        document = json.loads(out)
+        self.assertEqual(document['path'], path)
+        self.assertEqual(document['subreddit'], 'test')
+        self.assertEqual(document['notes'], 2)
+        self.assertEqual(document['users'], 1)
+        self.assertEqual(document['warnings'], [])
+
+    def test_the_output_and_the_directory_are_mutually_exclusive(self):
+        message = self.usage_error('backup', SUBREDDIT, '--output', 'notes.json',
+                                   '--directory', self.directory)
+        self.assertIn('not allowed with', message)
+
+    def test_backing_up_writes_nothing_to_reddit(self):
+        self.backup(SUBREDDIT, '--directory', self.directory)
+        self.assertEqual([record.method for record in self.reddit.requests
+                          if record.method != 'GET'], [])
+
+
+class RestoreCommandTests(CliTestCase):
+    """``usernotes restore``: a backup file back over the page."""
+
+    def setUp(self):
+        super().setUp()
+        self.directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
+        self.backup = self.write_backup('notes.json', self.reddit.page(SUBREDDIT))
+
+    def write_backup(self, name, content):
+        path = os.path.join(self.directory, name)
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write(content)
+        return path
+
+    def restore(self, *argv):
+        return self.run_cli('restore', *argv, '--cookies', self.cookies)
+
+    def empty_page(self):
+        """Replace the live page with an empty one, as a bad edit would."""
+        text = json.dumps({'ver': 6, 'constants': {}, 'blob': fmt.compress_blob({})})
+        self.reddit.pages[(SUBREDDIT, 'usernotes')] = text
+        return text
+
+    def edits(self):
+        return self.reddit.requests_to(f'/r/{SUBREDDIT}/api/wiki/edit', method='POST')
+
+    def test_puts_the_file_back_and_says_so(self):
+        self.empty_page()
+        status, out, err = self.restore(SUBREDDIT, self.backup)
+        self.assertEqual(status, EXIT_OK)
+        self.assertEqual(err, '')
+        with open(self.backup) as handle:
+            self.assertEqual(self.reddit.page(SUBREDDIT), handle.read())
+        self.assertIn('restored 2 notes for 1 users', out)
+        reason = self.edits()[-1].form['reason']
+        self.assertIn('restore usernotes for /r/test from notes.json', reason)
+        self.assertIn('usernotes-cli', reason)
+
+    def test_a_backup_and_a_restore_round_trip(self):
+        # The pair, end to end: back the page up, add a note, put it back.
+        path = self.write_backup('round.json', self.reddit.page(SUBREDDIT))
+        self.run_cli('backup', SUBREDDIT, '--output', path, '--cookies', self.cookies)
+        self.run_cli('add', SUBREDDIT, 'alice', 'added since the backup',
+                     '--cookies', self.cookies)
+        self.assertIn('added since the backup', self.read(SUBREDDIT, 'alice')[1])
+
+        status, _, _ = self.restore(SUBREDDIT, path)
+        self.assertEqual(status, EXIT_OK)
+        listing = self.read(SUBREDDIT, 'alice')[1]
+        self.assertNotIn('added since the backup', listing)
+        self.assertIn('spam watch, again', listing)
+
+    def test_a_dry_run_changes_nothing(self):
+        wrecked = self.empty_page()
+        status, out, _ = self.restore(SUBREDDIT, self.backup, '--dry-run')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('dry run', out)
+        self.assertEqual(self.reddit.page(SUBREDDIT), wrecked)
+        self.assertEqual(self.edits(), [])
+
+    def test_a_page_that_already_holds_the_file_is_left_alone(self):
+        status, out, _ = self.restore(SUBREDDIT, self.backup)
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('already holds it', out)
+        self.assertEqual(self.edits(), [])
+
+    def test_a_file_that_is_not_a_usernotes_page_is_refused(self):
+        wrecked = self.empty_page()
+        path = self.write_backup('junk.json', 'this is not a wiki page')
+        status, out, err = self.restore(SUBREDDIT, path)
+        self.assertEqual(status, EXIT_ERROR)
+        self.assertEqual(out, '')
+        self.assertIn('not a usernotes page', err)
+        self.assertEqual(self.reddit.page(SUBREDDIT), wrecked)
+        self.assertEqual(self.edits(), [])
+
+    def test_force_puts_it_back_anyway(self):
+        damaged = '{"ver": 6, "blob": "not base64"}'
+        status, out, _ = self.restore(SUBREDDIT,
+                                      self.write_backup('damaged.json', damaged),
+                                      '--force')
+        self.assertEqual(status, EXIT_OK)
+        self.assertEqual(self.reddit.page(SUBREDDIT), damaged)
+        self.assertIn('could not be decoded', out)
+
+    def test_a_file_that_is_not_there_is_a_usage_error(self):
+        self.assertIn('no such file',
+                      self.usage_error('restore', SUBREDDIT,
+                                       os.path.join(self.directory, 'nope.json')))
+
+    def test_json(self):
+        self.empty_page()
+        status, out, _ = self.restore(SUBREDDIT, self.backup, '--json')
+        self.assertEqual(status, EXIT_OK)
+        document = json.loads(out)
+        self.assertTrue(document['written'])
+        self.assertFalse(document['dry_run'])
+        self.assertEqual(document['schema'], 6)
+        self.assertEqual(document['notes'], 2)
+        self.assertEqual(document['replaced_notes'], 0)
+        self.assertEqual(document['path'], self.backup)
+
+
 class FailureTests(CliTestCase):
     """What the tool says, and what a shell can tell from its status."""
 
@@ -577,7 +740,7 @@ class HelpTests(CliTestCase):
 
     def test_the_top_level_help(self):
         text = self.output('--help')
-        for command in ('read', 'add', 'flags'):
+        for command in ('read', 'add', 'flags', 'backup', 'restore'):
             self.assertIn(command, text)
         self.assertIn('--cookies-from-browser', text)
         self.assertIn('--verbose', text)
@@ -609,6 +772,21 @@ class HelpTests(CliTestCase):
         self.assertIn('SUBREDDIT', text)
         self.assertIn('--json', text)
         self.assertIn('--color', text)
+
+    def test_the_help_for_backing_up(self):
+        text = self.output('backup', '--help')
+        self.assertIn('SUBREDDIT', text)
+        self.assertIn('--output', text)
+        self.assertIn('--directory', text)
+        self.assertIn('usernotes restore', text)
+
+    def test_the_help_for_restoring(self):
+        text = self.output('restore', '--help')
+        self.assertIn('SUBREDDIT', text)
+        self.assertIn('FILE', text)
+        self.assertIn('--force', text)
+        self.assertIn('--dry-run', text)
+        self.assertIn('usernotes backup', text)
 
 
 if __name__ == '__main__':
