@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """Talk to Reddit's wiki API with a cookie the caller already has.
 
 This module is the network half of the package: it reads and writes wiki

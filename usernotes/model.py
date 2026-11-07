@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """The notes a subreddit holds, as an editable in-memory collection.
 
 This is the layer between the wire format (`usernotes.format`) and the wiki

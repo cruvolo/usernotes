@@ -214,3 +214,11 @@ The code is a library with a thin front end over it:
 | `usernotes/api.py` | Reddit's wiki API over `urllib`, with a caller-supplied cookie. |
 | `usernotes/cookies.py` | Getting those cookies out of a browser (vendored from yt-dlp). |
 | `usernotes/errors.py` | Every exception the package raises. |
+
+## License
+
+Code derived from a third party in `usernotes/_vendor/` comes from the
+[`yt-dlp` project](https://github.com/yt-dlp/yt-dlp/), and is public domain.
+
+Everything else is under the terms of the AGPL 3.0.  See the [`COPYING`
+file](COPYING).

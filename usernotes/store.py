@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """Read and write a subreddit's usernotes as one editable store.
 
 This is the module a command line front end wants::

@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """Command line tools for the reddit Moderator Toolbox "usernotes" store.
 
 Usernotes are kept by the toolbox browser extension in a subreddit wiki page

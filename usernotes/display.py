@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """Render one user's notes as text, the way toolbox shows them in the browser.
 
 Toolbox's "User Notes" dialog (``extension/data/modules/usernotes.js:329-506``)

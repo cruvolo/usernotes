@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """Retrieve the browser cookies needed to talk to Reddit as a moderator.
 
 The usernotes wiki page can only be read (and written) by a moderator of the

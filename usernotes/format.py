@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """The on-wiki usernotes storage format: decode and encode the wiki page.
 
 This module is pure: it turns the text of ``/r/<sub>/wiki/usernotes`` into

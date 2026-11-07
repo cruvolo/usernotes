@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """Every exception this package raises, in one place.
 
 The hierarchy is deliberately shallow: one base class so callers can catch

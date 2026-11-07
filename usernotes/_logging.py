@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """The logger contract the modules in this package accept.
 
 Every public entry point that can emit progress or warnings takes a ``logger``

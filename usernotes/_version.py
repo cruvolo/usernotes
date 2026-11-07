@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """The package version, in one place.
 
 Kept apart from ``usernotes/__init__.py`` so that modules which need the

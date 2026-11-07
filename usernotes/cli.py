@@ -1,3 +1,6 @@
+# (c)2026 Chris Ruvolo. All rights reserved.
+# License: AGPL v3.0 only
+
 """The ``usernotes`` command line tool.
 
 This is the front end over the rest of the package: it turns arguments into a
