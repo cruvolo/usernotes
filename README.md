@@ -329,6 +329,16 @@ usernotes --cookies ~/cookies.txt search toolbox spam
 Cookies are credentials: the tool never prints or logs them, only the *names*
 of the cookies it found.
 
+A Chromium-family browser on Linux encrypts what it stores with a key held in
+the desktop keyring, and which keyring that is has to be guessed from the
+desktop environment - so on a desktop it does not recognise the guess can be
+wrong, the reddit session cookie goes missing, and every request is anonymous.
+The tool says so before it makes one, and naming the keyring settles it:
+`usernotes --cookies-from-browser chromium+gnomekeyring ...`.  Reading the GNOME
+keyring needs the optional extra from [Build and install](#build-and-install)
+above; a store with no keyring-encrypted cookies in it is read without any
+keyring access at all.
+
 ### Exit status
 
 | Status | Meaning |
