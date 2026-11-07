@@ -24,15 +24,26 @@ Modules:
     compatible with ``yt-dlp --cookies-from-browser``.
 `usernotes.errors`
     Every exception the package raises.
+`usernotes.cli`
+    The ``usernotes`` command line tool over all of the above, reached either
+    as ``usernotes``, ``python -m usernotes`` or `usernotes.cli.main`.
+`usernotes.display`
+    Turning one user's notes into the text a terminal is shown, coloured the
+    way toolbox colours them in the browser.
 
 Cookies are always a parameter, never something this package fetches on its
 own: pass whatever `usernotes.cookies.load_cookie_jar` returns to
-``UsernotesStore(cookies=...)``.
+``UsernotesStore(cookies=...)``.  `usernotes.cli` is the one place that goes
+and gets them, from ``--cookies-from-browser`` or ``--cookies FILE``.
 
-The command line front end itself is not written yet; the modules above carry
-the interfaces it needs, in their docstrings.
+The command implemented so far is ``usernotes read SUBREDDIT USERNAME``, which
+prints one user's notes.  The library underneath it can already edit and back
+up a store, so the rest of the front end is a matter of more commands in
+`usernotes.cli`.
 
-A first look at a subreddit's notes::
+A first look at a subreddit's notes, from a shell and from python::
+
+    $ usernotes read toolbox alice --cookies-from-browser firefox
 
     from usernotes import cookies
     from usernotes.store import UsernotesStore

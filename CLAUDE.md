@@ -72,9 +72,14 @@ Within `usernotes/`:
   * `api.py` -- reddit's wiki API over urllib, with a caller-supplied cookie
   * `cookies.py` -- retrieving those cookies from a browser
   * `errors.py` -- every exception the package raises
+  * `cli.py` -- the command line front end (`usernotes`, `python -m
+    usernotes`): arguments, cookies, exit statuses
+  * `display.py` -- turning one user's notes into terminal text, with the
+    colours toolbox uses
 
-Cookies are always a parameter: nothing in this package fetches them by
-itself.  The command line front end (goals 1-3 above) is not written yet.
+Cookies are always a parameter: nothing in *this library* fetches them by
+itself.  `cli.py` is the one place that does, on the user's behalf, from
+`--cookies-from-browser` or `--cookies FILE`.
 
 ## Code
 
@@ -108,9 +113,14 @@ user know.
 
 The library is in place: reading, editing, saving and backing up usernotes
 all work against reddit's wiki API, with tests that never touch reddit (a
-throwaway HTTP server on 127.0.0.1 stands in for it).  The command line
-interface over it is not written yet.  Nothing in the package has been run
-against a real subreddit's notes.
+throwaway HTTP server on 127.0.0.1 stands in for it).  Goal 1 is done:
+`usernotes read SUBREDDIT USERNAME` prints one user's notes the way toolbox's
+"User Notes" dialog shows them, with `--cookies-from-browser` /
+`--cookies FILE` for a session and `--json` for scripts.  Goals 2 and 3
+(`add`, `backup`) are not written yet - the library calls they need are
+already there, and `cli.py` is where they go.
+
+Nothing in the package has been run against a real subreddit's notes.
 
 ## Cookies
 
