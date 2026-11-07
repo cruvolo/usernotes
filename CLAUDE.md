@@ -143,13 +143,9 @@ All of them take `--cookies-from-browser` / `--cookies FILE` for a session, and
 needs are in `usernotes.model` and `usernotes.format`, and `cli.py` is where it
 goes.
 
-`usernotes read` and `add` have been run against a real subreddit's notes, from
-Firefox cookies, and both work.  Nothing else here has.
-
-## Cookies
-
-When you need cookies to test in a non-destructive manner, let the user know
-how to retrieve them for you.
+`usernotes read`, `add`, `backup` and `restore` have been run against a real
+subreddit's notes, using Firefox cookies, and both work.  Nothing else here
+has.
 
 ## Testing
 
