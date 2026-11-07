@@ -97,6 +97,10 @@ _MAX_REASON = 200
 #: How many damaged-page warnings to log at warning level before summarising.
 _MAX_LOGGED_WARNINGS = 5
 
+#: Stands in for "this argument was not given", so that `UsernotesStore.update`
+#: can tell "leave it alone" apart from "clear it".
+_UNSET = object()
+
 
 @dataclasses.dataclass(frozen=True)
 class Backup:
@@ -419,38 +423,43 @@ class UsernotesStore:
         self._changes.append(f'create new note on user {name}')
         return note
 
-    def update(self, username, time, *, text=None, type=None, link=None, mod=None):
+    def update(self, username, time, *, text=_UNSET, type=_UNSET, link=_UNSET,
+               mod=_UNSET):
         """Change one note in place and return it.
 
-        Only the fields given are touched.
+        Only the fields given are touched; to *clear* one, pass ``None`` for
+        *type* or *mod*, or ``''`` for *link*.  Note text cannot be cleared -
+        an empty note is not a thing toolbox can store - so deleting the note
+        is `remove`'s job.
 
         :param time: the note to change, by its timestamp (milliseconds, as
             `Note.time` gives it) or its whole seconds.  A second is not a
             precise enough key to be sure which note was meant when several
-            share one, so the store logs a warning if it finds more than one
-            and changes the newest, which is the one toolbox would pick.
+            share one: the stored format has nothing finer, so the first of
+            them in stored order is taken, which is what toolbox does, and the
+            store says so in a warning.
+        :param type: as `add`; ``None`` to leave the note with no type.
+        :param mod: the author to record; ``None`` to record none.
         :raises usernotes.errors.UserNotFoundError: if the user has no notes.
         :raises usernotes.errors.NoteNotFoundError: if there is no such note.
         :raises ValueError: if no field was given, or *text* is empty.
+        :raises usernotes.errors.UnknownNoteTypeError: if *type* is not one the
+            subreddit defines.
         """
         user = self.require(username)
-        if text is None and type is None and link is None and mod is None:
+        if text is _UNSET and type is _UNSET and link is _UNSET and mod is _UNSET:
             raise ValueError('update() needs at least one of text=, type=, link=, mod=')
-        matches = user.find_all(time)
-        if len(matches) > 1:
-            self.log.warning(
-                f'user {user.name!r} has {len(matches)} notes at {time}; '
-                f'changing the newest ({matches[0].time})')
+        _warn_ambiguous(user, time, 'changing', self.log)
         note = user.require(time)
 
-        if text is not None:
+        if text is not _UNSET:
             note.text = _clean_text(text)
-        if type is not None:
+        if type is not _UNSET:
             note.type = self._note_type_key(type, None)
-        if link is not None:
+        if link is not _UNSET:
             note.link = self._link(link)
-        if mod is not None:
-            note.mod = self._author(mod)
+        if mod is not _UNSET:
+            note.mod = None if mod is None else normalize_username(mod)
         self._changes.append(f'update note {note.time} on user {user.name}')
         return note
 
@@ -465,11 +474,7 @@ class UsernotesStore:
         :raises usernotes.errors.NoteNotFoundError: if there is no such note.
         """
         user = self.require(username)
-        matches = user.find_all(time)
-        if len(matches) > 1:
-            self.log.warning(
-                f'user {user.name!r} has {len(matches)} notes at {time}; '
-                f'deleting the newest ({matches[0].time})')
+        _warn_ambiguous(user, time, 'deleting', self.log)
         note = self._users.remove_note(username, time)
         self._changes.append(f'delete note {note.time} on user {user.name}')
         return note
@@ -596,7 +601,7 @@ class UsernotesStore:
 
     def _check_stale(self):
         current = self.client.read_page(self.subreddit, self.page, missing_ok=True)
-        if current != self._raw:
+        if _comparable(current) != _comparable(self._raw):
             raise StaleStoreError(
                 f'/r/{self.subreddit}/wiki/{self.page} changed since it was read '
                 '(another moderator saved notes, or it was edited on the wiki). '
@@ -647,6 +652,35 @@ class UsernotesStore:
         if len(warnings) > _MAX_LOGGED_WARNINGS:
             self.log.warning(f'/r/{self.subreddit} usernotes: ...and '
                              f'{len(warnings) - _MAX_LOGGED_WARNINGS} more problem(s)')
+
+
+def _comparable(text):
+    """The form of a page used to decide whether it has changed.
+
+    Line endings and surrounding whitespace are ignored.  A wiki edit that
+    only re-wraps the page changes nothing about the notes, and reddit is
+    within its rights to normalise them; treating that as "another moderator
+    got there first" would block a save for no reason.  Anything else - one
+    byte of the notes themselves - is a change, and is not written over.
+    """
+    if text is None:
+        return None
+    return text.replace('\r\n', '\n').strip()
+
+
+def _warn_ambiguous(user, time, action, log):
+    """Say so when a timestamp does not pick out exactly one note.
+
+    The stored format keeps whole seconds and has no note id, so two notes
+    added in the same second are indistinguishable even to toolbox.  Silence
+    would be worse than the ambiguity: the caller is about to change or delete
+    one of them.
+    """
+    matches = user.find_all(time)
+    if len(matches) > 1:
+        log.warning(
+            f'user {user.name!r} has {len(matches)} notes with the same timestamp '
+            f'({time}); {action} the first of them, which is what toolbox does')
 
 
 def _clean_text(text):

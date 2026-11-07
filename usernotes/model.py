@@ -126,7 +126,12 @@ class UserNotes:
 
         When several notes match because the timestamp is only second-accurate,
         the newest one wins, which is the one toolbox would act on (it walks
-        the notes newest first and stops at the first match).
+        the notes newest first and stops at the first match).  Notes sharing
+        exactly the same timestamp are indistinguishable in the stored format;
+        the first of those in stored order is taken.
+
+        Use `find_all` to see the whole set, and check whether there is more
+        than one before acting on it.
         """
         matches = self.find_all(time)
         return matches[0] if matches else None

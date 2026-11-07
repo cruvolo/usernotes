@@ -267,7 +267,10 @@ class Page:
     :param warnings: human-readable descriptions of anything damaged or
         unexpected that was found and worked around, empty for a clean page.
         Worth showing to the user: it means the store has been written by
-        something other than a stock toolbox.
+        something other than a stock toolbox.  Note text that could be
+        salvaged is salvaged - a note stored as a bare string keeps its text -
+        because losing a moderator's words silently is worse than reading
+        them approximately.
     """
 
     ver: int
@@ -358,8 +361,17 @@ def parse_page(content_md, subreddit='', *, strict=False, base_url=DEFAULT_BASE_
                 parsed = []
                 for index, raw in enumerate(notes_raw):
                     if not isinstance(raw, dict):
-                        problem(f'user {name!r}: note {index} is {type(raw).__name__}, '
-                                'not an object; skipped')
+                        # Not the shape the format stores, and toolbox would
+                        # crash on it (`undefined.toString()`); a bare string
+                        # is still somebody's note text, so keep that much
+                        # rather than drop it, and say what was found.
+                        if isinstance(raw, str):
+                            problem(f'user {name!r}: note {index} is a bare string, '
+                                    'not an object; kept as text only')
+                            parsed.append(Note(text=raw))
+                        else:
+                            problem(f'user {name!r}: note {index} is {type(raw).__name__}, '
+                                    'not an object; skipped')
                         continue
                     parsed.append(_parse_note(ver, constants, raw, subreddit, index,
                                               name, problem, base_url))
@@ -702,15 +714,16 @@ def _parse_note(ver, constants, raw, subreddit, index, name, problem, base_url):
         problem(f'{where}: text is {type(text).__name__}, not text; stored as empty')
         text = ''
 
-    time = raw.get('t')
-    if time is None:
-        time = 0
-    stored_time = time_from_stored(ver, time)
-    if stored_time == 0 and time not in (0, None):
-        problem(f'{where}: time is not a number ({time!r}); treated as unknown')
+    stored_time = 0
+    if raw.get('t') is not None:
+        time = _stored_number(raw['t'], 'time', where, problem)
+        if time is None:
+            problem(f'{where}: time is {raw["t"]!r}, not a number; treated as unknown')
+        else:
+            stored_time = time_from_stored(ver, time)
 
-    mod = _checked_lookup(constants, 'users', raw.get('m'), where, 'moderator', problem)
-    note_type_key = _checked_lookup(constants, 'warnings', raw.get('w'), where, 'type', problem)
+    mod = _lookup(constants, 'users', raw.get('m'), where, 'moderator', problem)
+    note_type_key = _lookup(constants, 'warnings', raw.get('w'), where, 'type', problem)
 
     link = raw.get('l')
     if link is None:
@@ -724,9 +737,48 @@ def _parse_note(ver, constants, raw, subreddit, index, name, problem, base_url):
     return Note(text=text, time=stored_time, mod=mod, type=note_type_key, link=link)
 
 
-def _checked_lookup(constants, pool_name, index, where, label, problem):
+def _stored_number(value, what, where, problem):
+    """A stored number, accepting the text JavaScript would quietly coerce.
+
+    Toolbox runs on JSON parsed by JavaScript, where ``"1559310750" * 1000`` is
+    a date and ``pool["0"]`` is the first element, so a store written by hand
+    or by a foreign tool can hold numbers as strings and toolbox still reads
+    them.  Reading them here too means a timestamp or an author is not quietly
+    replaced with "unknown" on the next save.  Says so when it happens, because
+    it is not what toolbox writes.
+
+    :returns: the number, or ``None`` when the value is not one - the caller
+        decides how to describe that, since it knows which field it was.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        try:
+            number = int(value.strip())
+        except ValueError:
+            return None
+        problem(f'{where}: {what} is stored as text ({value!r}); read as {number}')
+        return number
+    return None
+
+
+def _lookup(constants, pool_name, raw_index, where, label, problem):
+    """Resolve one of a note's constants-pool indices, or ``None``.
+
+    ``None`` in the note itself means "not set" and is not a problem; anything
+    else that cannot be resolved is reported, because it means an author or a
+    note type that toolbox would show as missing too.
+    """
+    if raw_index is None:
+        return None
+    index = _stored_number(raw_index, f'{label} index', where, problem)
+    if index is None:
+        problem(f'{where}: {label} is {raw_index!r}, not a number; treated as unset')
+        return None
     value, resolved = _pool_lookup(constants, pool_name, index)
     if not resolved:
-        problem(f'{where}: {label} index {index!r} does not resolve to a '
+        problem(f'{where}: {label} index {raw_index!r} does not resolve to a '
                 f'{pool_name} entry; treated as unset')
     return value

@@ -62,6 +62,20 @@ You may take code from both these projects to use within this project as needed.
   * `usernotes/` -- contains the python code
   * `usernotes/_vendor/` -- code that was borrowed from yt-dlp for browser cookies
 
+Within `usernotes/`:
+
+  * `store.py` -- the facade a front end uses: `UsernotesStore` loads a
+    subreddit's notes, edits them, saves them back, backs them up
+  * `format.py` -- the on-wiki storage format (page JSON, its zlib/base64
+    blob, the constants pools, link squashing, note types)
+  * `model.py` -- the in-memory notes collection (usernames, ordering)
+  * `api.py` -- reddit's wiki API over urllib, with a caller-supplied cookie
+  * `cookies.py` -- retrieving those cookies from a browser
+  * `errors.py` -- every exception the package raises
+
+Cookies are always a parameter: nothing in this package fetches them by
+itself.  The command line front end (goals 1-3 above) is not written yet.
+
 ## Code
 
 Use standard python3 where possible.  Use necessary libraries, and make
@@ -92,8 +106,11 @@ user know.
 
 ## Current state
 
-This repository is brand new.  No code exists.  Use best practices when
-creating the codebase.
+The library is in place: reading, editing, saving and backing up usernotes
+all work against reddit's wiki API, with tests that never touch reddit (a
+throwaway HTTP server on 127.0.0.1 stands in for it).  The command line
+interface over it is not written yet.  Nothing in the package has been run
+against a real subreddit's notes.
 
 ## Cookies
 

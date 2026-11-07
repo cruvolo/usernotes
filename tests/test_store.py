@@ -348,6 +348,41 @@ class EditTests(StoreTestCase):
         store.update('alice', 1559310750000, link='')
         self.assertEqual(store.notes('alice')[0].link, '')
 
+    def test_update_can_clear_a_type_and_an_author(self):
+        # "leave it alone" and "clear it" have to be tellable apart, which is
+        # what the unset default is for.
+        store = self.store.load()
+        self.assertEqual(store.notes('alice')[0].type, 'ban')
+        store.update('alice', 1559310750000, type=None)
+        self.assertIsNone(store.notes('alice')[0].type)
+        self.assertEqual(store.notes('alice')[0].mod, MOD)      # untouched
+
+        store.update('alice', 1559310750000, mod=None)
+        self.assertIsNone(store.notes('alice')[0].mod)
+
+        store.save()
+        # The stored form has no way to say "no author" other than by pooling a
+        # null and pointing at it, which is exactly what toolbox does for a
+        # note with no type - so the note reads back with neither.
+        page = fmt.parse_page(self.reddit.page('test'), 'test')
+        self.assertIsNone(page.users['alice'][0].mod)
+        self.assertIsNone(page.users['alice'][0].type)
+        self.assertEqual(self.saved_page()['constants'], {'users': [None], 'warnings': [None]})
+
+    def test_update_can_change_the_author(self):
+        store = self.store.load()
+        store.update('alice', 1559310750000, mod='u/SomeoneElse')
+        self.assertEqual(store.notes('alice')[0].mod, 'SomeoneElse')
+
+    def test_update_leaves_untouched_fields_alone(self):
+        store = self.store.load()
+        store.update('alice', 1559310750000, text='only the text')
+        note = store.notes('alice')[0]
+        self.assertEqual(note.text, 'only the text')
+        self.assertEqual(note.type, 'ban')
+        self.assertEqual(note.mod, MOD)
+        self.assertEqual(note.time, 1559310750000)
+
     def test_update_reports_a_note_that_is_not_there(self):
         store = self.store.load()
         with self.assertRaises(NoteNotFoundError):
@@ -436,6 +471,14 @@ class SaveTests(StoreTestCase):
         page = json.loads(self.reddit.page('test'))
         self.assertEqual([slot['n'] for slot in fmt.decompress_blob(page['blob'])['alice']['ns']],
                          ['theirs'])
+
+    def test_rewrapping_the_page_is_not_a_change(self):
+        # A wiki edit that only moves whitespace around changes nothing about
+        # the notes, and a save should not be blocked by it.
+        store = self.store.load()
+        store.add('alice', 'mine')
+        self.reddit.pages[('test', 'usernotes')] += '\n'
+        self.assertTrue(store.save())
 
     def test_staleness_can_be_overridden(self):
         store = self.store.load()

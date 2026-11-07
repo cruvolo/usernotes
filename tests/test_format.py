@@ -187,15 +187,19 @@ class ParsePageTests(unittest.TestCase):
                 'carol': {},
             }),
         }), 'test')
-        # The well-formed note survives; everything else is described.
-        self.assertEqual([note.text for note in page.users['alice']], ['', 'fine'])
-        self.assertEqual(page.users['alice'][1].time, 1559310750000)
+        # A note stored as a bare string keeps its text (toolbox would crash
+        # on the page at all); the malformed object is kept as an empty note
+        # with its timestamp and link dropped; the good note is untouched.
+        self.assertEqual([note.text for note in page.users['alice']],
+                         ['not an object', '', 'fine'])
+        self.assertEqual(page.users['alice'][2].time, 1559310750000)
         self.assertEqual(page.users['alice'][0].time, 0)
-        self.assertIsNone(page.users['alice'][0].mod)
+        self.assertEqual(page.users['alice'][1].time, 0)
+        self.assertIsNone(page.users['alice'][1].mod)
         self.assertEqual(page.users['bob'], ())
         self.assertEqual(page.users['carol'], ())
-        self.assertTrue(any('not an object' in warning for warning in page.warnings))
-        self.assertTrue(any('time is not a number' in warning for warning in page.warnings))
+        self.assertTrue(any('bare string' in warning for warning in page.warnings))
+        self.assertTrue(any('not a number' in warning for warning in page.warnings))
         self.assertTrue(any('link is' in warning for warning in page.warnings))
 
     def test_strict_mode_refuses_damage(self):
@@ -203,6 +207,43 @@ class ParsePageTests(unittest.TestCase):
             fmt.parse_page(json.dumps({
                 'ver': 6, 'constants': {}, 'blob': fmt.compress_blob({'a': {'ns': ['nope']}}),
             }), 'test', strict=True)
+
+    def test_reads_numbers_that_were_stored_as_text(self):
+        # JavaScript coerces these, so toolbox reads them; a hand-edited or
+        # foreign-written store should not silently lose the date or author.
+        page = fmt.parse_page(json.dumps({
+            'ver': 6, 'constants': {'users': ['mod'], 'warnings': ['ban']},
+            'blob': fmt.compress_blob({'alice': {'ns': [
+                {'t': '1559310750', 'n': 'x', 'm': '0', 'w': '0'}]}}),
+        }), 'test')
+        note = page.users['alice'][0]
+        self.assertEqual(note.time, 1559310750000)
+        self.assertEqual(note.mod, 'mod')
+        self.assertEqual(note.type, 'ban')
+        self.assertEqual(len(page.warnings), 3)     # said so, three times
+        self.assertTrue(all('stored as text' in warning for warning in page.warnings))
+        # ...and the date survives being written back.
+        rebuilt = fmt.parse_page(fmt.build_page({'alice': [note]}), 'test')
+        self.assertEqual(rebuilt.users['alice'][0].time, 1559310750000)
+
+    def test_a_number_that_is_not_a_number_is_unset(self):
+        page = fmt.parse_page(json.dumps({
+            'ver': 6, 'constants': {'users': ['mod'], 'warnings': ['ban']},
+            'blob': fmt.compress_blob({'alice': {'ns': [
+                {'t': 'soon', 'n': 'x', 'm': 'first', 'w': 0},
+                {'t': 1, 'n': 'y', 'm': 99, 'w': -1}]}}),
+        }), 'test')
+        first, second = page.users['alice']
+        self.assertEqual(first.time, 0)
+        self.assertIsNone(first.mod)
+        self.assertEqual(first.type, 'ban')
+        self.assertIsNone(second.mod)               # out of range
+        self.assertIsNone(second.type)              # negative is not a position
+        # Nothing is dropped silently: a time that cannot be read, a text
+        # index, an index past the end and a negative index are all reported.
+        self.assertEqual(len(page.warnings), 4)
+        self.assertTrue(any('treated as unknown' in warning for warning in page.warnings))
+        self.assertEqual(sum('treated as unset' in warning for warning in page.warnings), 3)
 
     def test_rejects_things_that_are_not_pages(self):
         for content in ('', '   ', 'not json at all', '[1, 2, 3]', '"a string"',
