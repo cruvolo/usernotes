@@ -166,6 +166,14 @@ than after it (`usernotes --cookies FILE read toolbox alice`).
 subreddit's notes, using Firefox cookies, and both work.  Nothing else here
 has.
 
+`usernotes read` has also been run against a real subreddit with Chromium
+cookies on Linux, where the cookie store is encrypted with a key that the
+browser keeps in the desktop keyring: the keyring is guessed from the desktop
+environment, and on a desktop that guess cannot name (MATE is one) it is the
+freedesktop secret service the browser used, so that is where the key is read
+from.  `browser-cookies.md` has the details, including the places where
+`usernotes/_vendor/browser_cookies.py` departs from yt-dlp.
+
 ## Testing
 
 ALL TESTING MUST BE NON-DESTRUCTIVE!!!  Assume you are working with a
