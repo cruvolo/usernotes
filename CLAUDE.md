@@ -53,9 +53,16 @@ You may take code from both these projects to use within this project as needed.
 2. Create a command line interface to add to a user's usernotes on a particular
    subreddit.  Parameters include: subreddit, username, --cookies-from-browser
    (match yt-dlp), the usernote message, and whether any of the flags should be
-   set ("spam watch", "spam warning", "ban", "permanent ban", etc.).
+   set ("spam watch", "spam warning", "ban", "permanent ban", etc.).  If a flag
+   is not specified, the most recent flag, if any, should be used.  After an
+   entry has been added, the entries for that username should be read and
+   displayed.
 
-3. Create a command line interface to back up a subreddit's usernotes.
+3. Create a command line interface to back up and, seperately, to restore a
+   subreddit's usernotes.
+
+4. Create a command line interface to search through a subreddit's usernotes
+   for matching entries and display the notes.
 
 ## Repository layout:
 
@@ -93,8 +100,7 @@ Don't make mistakes.
 ## Git use
 
 Local git may be used as needed.  It's better to make smaller, more
-understandable, incremental commits than larger commits.  There is no upstream
-or origin repo.
+understandable, incremental commits than larger commits.
 
 Do not ever commit secret data like cookies or keys to git!  For example, do
 not commit the `docker-claude-agent.sh` script to git, as it contains an
@@ -116,9 +122,9 @@ all work against reddit's wiki API, with tests that never touch reddit (a
 throwaway HTTP server on 127.0.0.1 stands in for it).  Goal 1 is done:
 `usernotes read SUBREDDIT USERNAME` prints one user's notes the way toolbox's
 "User Notes" dialog shows them, with `--cookies-from-browser` /
-`--cookies FILE` for a session and `--json` for scripts.  Goals 2 and 3
-(`add`, `backup`) are not written yet - the library calls they need are
-already there, and `cli.py` is where they go.
+`--cookies FILE` for a session and `--json` for scripts.  Goals 2, 3 and 4
+(`add`, `backup`, `restore`, `search`) are not written yet - the library calls
+they need are already there, and `cli.py` is where they go.
 
 Nothing in the package has been run against a real subreddit's notes.
 
