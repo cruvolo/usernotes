@@ -104,6 +104,15 @@ class CliTestCase(unittest.TestCase):
     def requests_to(self, page):
         return self.reddit.requests_to(f'/r/{SUBREDDIT}/wiki/{page}.json')
 
+    def usage_error(self, *argv):
+        """Run a command line that should not parse; returns what it said."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                main(list(argv), client_options=self.client_options())
+        self.assertEqual(caught.exception.code, 2)
+        return err.getvalue()
+
 
 class ReadTests(CliTestCase):
 
@@ -248,6 +257,207 @@ class JsonTests(CliTestCase):
         self.assertIn('not <escaped>', self.read(SUBREDDIT, 'alice')[1])
 
 
+class AddTests(CliTestCase):
+    """``usernotes add``: a write, then the user's notes read back."""
+
+    def add(self, *argv):
+        """``usernotes add`` with the cookies file, and what it printed."""
+        return self.run_cli('add', *argv, '--cookies', self.cookies)
+
+    def stored(self, username='alice'):
+        """The notes the fake reddit now holds for *username*, newest first."""
+        page = fmt.parse_page(self.reddit.page(SUBREDDIT), SUBREDDIT)
+        return page.users.get(username, ())
+
+    def edits(self):
+        return self.reddit.requests_to(f'/r/{SUBREDDIT}/api/wiki/edit', method='POST')
+
+    def test_writes_the_note_and_shows_the_users_notes_again(self):
+        status, out, err = self.add(SUBREDDIT, 'alice', 'a brand new note',
+                                    '--flag', 'ban')
+        self.assertEqual(status, EXIT_OK)
+        self.assertEqual(err, '')
+
+        # What is printed is their notes, newest first, with the new one in it.
+        self.assertEqual(out.splitlines()[0], 'User Notes - /u/alice')
+        self.assertEqual(out.splitlines()[1], '/r/test - 3 notes')
+        self.assertIn('[Ban] a brand new note', out)
+
+        notes = self.stored()
+        self.assertEqual(len(notes), 3)
+        self.assertEqual(notes[0].text, 'a brand new note')
+        self.assertEqual(notes[0].type, 'ban')
+        self.assertEqual(notes[0].mod, 'moduser')       # the signed-in account
+
+    def test_the_notes_shown_are_read_back_from_the_wiki(self):
+        self.add(SUBREDDIT, 'alice', 'a note', '--flag', 'ban')
+        # one read to load, one for the staleness check before writing, and
+        # one for the listing afterwards.
+        self.assertEqual(len(self.requests_to('usernotes')), 3)
+        self.assertEqual(len(self.edits()), 1)
+
+    def test_adding_writes_nothing_but_the_page_and_its_settings(self):
+        self.add(SUBREDDIT, 'alice', 'a note', '--flag', 'ban')
+        self.assertEqual(
+            [record.path for record in self.reddit.requests if record.method == 'POST'],
+            [f'/r/{SUBREDDIT}/api/wiki/edit', f'/r/{SUBREDDIT}/wiki/settings/'])
+
+    def test_the_revision_says_what_was_done(self):
+        self.add(SUBREDDIT, 'alice', 'a note', '--flag', 'ban')
+        reason = self.edits()[0].form['reason']
+        self.assertIn('create new note on user alice', reason)
+        self.assertIn('usernotes-cli', reason)
+
+    def test_the_flag_carries_over_from_the_users_most_recent_note(self):
+        # alice's newest note is flagged spamwatch
+        status, out, _ = self.add(SUBREDDIT, 'alice', 'and again')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('[Spam Watch] and again', out)
+        self.assertEqual(self.stored()[0].type, 'spamwatch')
+
+    def test_the_carry_over_looks_past_notes_with_no_flag(self):
+        self.start_reddit(pages={('test', 'usernotes'): notes_page(users={'bob': {'ns': [
+            {'t': NOW - 60, 'n': 'no flag here', 'm': 0, 'w': None, 'l': ''},
+            {'t': NOW - 400 * DAY, 'n': 'banned before', 'm': 0, 'w': 1, 'l': ''}]}})})
+        status, out, _ = self.add(SUBREDDIT, 'bob', 'and again')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('[Ban] and again', out)
+        self.assertEqual(self.stored('bob')[0].type, 'ban')
+
+    def test_no_flag_is_carried_over_when_the_user_has_none(self):
+        status, out, _ = self.add(SUBREDDIT, 'nobody', 'a first note')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIsNone(self.stored('nobody')[0].type)
+        self.assertIn('a first note', out)
+
+    def test_the_flag_can_be_none(self):
+        status, _, _ = self.add(SUBREDDIT, 'alice', 'no flag please',
+                                '--flag', 'none')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIsNone(self.stored()[0].type)
+
+    def test_the_flag_may_be_named_by_any_spelling_of_its_name(self):
+        for spelling in ('spamwatch', 'Spam Watch', 'spam watch', 'SPAMWATCH'):
+            with self.subTest(spelling=spelling):
+                status, _, _ = self.add(SUBREDDIT, 'alice', f'note {spelling}',
+                                        '--flag', spelling)
+                self.assertEqual(status, EXIT_OK)
+                self.assertEqual(self.stored()[0].type, 'spamwatch')
+
+    def test_the_subreddits_own_flags_are_used(self):
+        self.reddit.pages[('test', 'toolbox')] = json.dumps({'usernoteColors': [
+            {'key': 'silly', 'text': 'Silly', 'color': 'fuchsia'}]})
+        status, out, _ = self.add(SUBREDDIT, 'alice', 'a silly note',
+                                  '--flag', 'silly', '--color', 'always')
+        self.assertEqual(status, EXIT_OK)
+        self.assertEqual(self.stored()[0].type, 'silly')
+        self.assertIn('\x1b[38;5;201m[Silly]\x1b[0m', out)
+
+    def test_a_flag_the_subreddit_lost_is_not_carried_over(self):
+        # Someone flagged this user with a type the config no longer defines.
+        self.start_reddit(pages={('test', 'usernotes'): notes_page(
+            users={'bob': {'ns': [
+                {'t': NOW - 60, 'n': 'an old note', 'm': 0, 'w': 2, 'l': ''}]}},
+            constants={'users': ['moduser'], 'warnings': ['ban', 'permban', 'gone']})})
+        status, out, err = self.add(SUBREDDIT, 'bob', 'a new note')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIsNone(self.stored('bob')[0].type)
+        self.assertIn('a new note', out)
+        self.assertIn('without a flag', err)
+
+    def test_an_unknown_flag_is_refused_before_anything_is_written(self):
+        before = self.reddit.page(SUBREDDIT)
+        status, out, err = self.add(SUBREDDIT, 'alice', 'a note',
+                                    '--flag', 'silly')
+        self.assertEqual(status, EXIT_ERROR)
+        self.assertEqual(out, '')
+        self.assertIn('spamwatch', err)     # the flags that would have worked
+        self.assertEqual(self.reddit.page(SUBREDDIT), before)
+        self.assertEqual(self.edits(), [])
+
+    def test_a_link_is_stored_the_way_toolbox_stores_it(self):
+        link = f'{self.reddit.base_url}/r/test/comments/abc123/'
+        status, out, _ = self.add(SUBREDDIT, 'alice', 'about that comment',
+                                  '--flag', 'ban', '--link', link)
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn(link, out)
+        stored = json.loads(self.reddit.page(SUBREDDIT))
+        note = fmt.decompress_blob(stored['blob'])['alice']['ns'][0]
+        self.assertEqual(note['l'], 'l,abc123')
+
+    def test_a_link_that_is_not_one_is_a_usage_error(self):
+        self.assertIn('not a reddit link',
+                      self.usage_error('add', SUBREDDIT, 'alice', 'a note',
+                                       '--link', 'somewhere over there'))
+
+    def test_the_note_may_not_be_empty(self):
+        self.assertIn('the note is empty',
+                      self.usage_error('add', SUBREDDIT, 'alice', '   '))
+
+    def test_the_first_note_creates_the_page_and_locks_it_down(self):
+        self.start_reddit(pages={})
+        status, out, _ = self.add(SUBREDDIT, 'alice', 'the first note ever',
+                                  '--flag', 'ban')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('[Ban] the first note ever', out)
+        self.assertTrue(self.reddit.page(SUBREDDIT))
+        # Toolbox leaves the page listed and moderators-only; so does this.
+        self.assertEqual(self.reddit.permlevel, 2)
+        self.assertTrue(self.reddit.listed)
+
+    def test_json_after_adding(self):
+        status, out, _ = self.add(SUBREDDIT, 'alice', 'a note', '--flag', 'ban',
+                                  '--json')
+        self.assertEqual(status, EXIT_OK)
+        document = json.loads(out)
+        self.assertEqual(document['name'], 'alice')
+        self.assertEqual(document['notes'][0]['text'], 'a note')
+        self.assertEqual(document['notes'][0]['type'], 'ban')
+        self.assertEqual(document['notes'][0]['mod'], 'moduser')
+
+
+class FlagsTests(CliTestCase):
+    """``usernotes flags``: how a moderator finds out what --flag accepts."""
+
+    def flags(self, *argv):
+        return self.run_cli('flags', *argv, '--cookies', self.cookies)
+
+    def test_lists_toolboxs_defaults_when_the_subreddit_defines_none(self):
+        status, out, err = self.flags(SUBREDDIT)
+        self.assertEqual(status, EXIT_OK)
+        self.assertEqual(err, '')
+        self.assertIn('Usernote flags - /r/test', out)
+        for name in ('Good Contributor', 'Spam Watch', 'Spam Warning',
+                     'Abuse Warning', 'Ban', 'Permanent Ban', 'Bot Ban'):
+            self.assertIn(name, out)
+        for key in ('gooduser', 'spamwatch', 'spamwarn', 'abusewarn', 'ban',
+                    'permban', 'botban'):
+            self.assertIn(key, out)
+
+    def test_lists_the_subreddits_own_flags_in_their_colours(self):
+        self.reddit.pages[('test', 'toolbox')] = json.dumps({'usernoteColors': [
+            {'key': 'silly', 'text': 'Silly', 'color': 'fuchsia'},
+            {'key': 'bad', 'text': 'Very Bad', 'color': '#ff0000'}]})
+        status, out, _ = self.flags(SUBREDDIT, '--color', 'always')
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn('\x1b[38;5;201mSilly\x1b[0m', out)
+        self.assertIn('\x1b[38;5;196mVery Bad\x1b[0m', out)
+        self.assertNotIn('Good Contributor', out)
+
+    def test_json(self):
+        document = json.loads(self.flags(SUBREDDIT, '--json')[1])
+        self.assertEqual(document['subreddit'], 'test')
+        self.assertEqual([flag['key'] for flag in document['flags']][:2],
+                         ['gooduser', 'spamwatch'])
+        self.assertEqual(document['flags'][0]['text'], 'Good Contributor')
+        self.assertEqual(document['flags'][0]['color'], 'green')
+
+    def test_nothing_is_written(self):
+        self.flags(SUBREDDIT)
+        self.assertEqual([record.method for record in self.reddit.requests
+                          if record.method != 'GET'], [])
+
+
 class FailureTests(CliTestCase):
     """What the tool says, and what a shell can tell from its status."""
 
@@ -314,14 +524,6 @@ class FailureTests(CliTestCase):
 class UsageTests(CliTestCase):
     """Argument mistakes are argparse's: usage on stderr, status 2."""
 
-    def usage_error(self, *argv):
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaises(SystemExit) as caught:
-                main(list(argv), client_options=self.client_options())
-        self.assertEqual(caught.exception.code, 2)
-        return err.getvalue()
-
     def test_a_command_is_required(self):
         self.assertIn('COMMAND', self.usage_error())
 
@@ -352,6 +554,12 @@ class UsageTests(CliTestCase):
         self.assertIn('invalid choice',
                       self.usage_error('read', SUBREDDIT, 'alice', '--color', 'maybe'))
 
+    def test_add_needs_the_note_itself(self):
+        self.assertIn('TEXT', self.usage_error('add', SUBREDDIT, 'alice'))
+
+    def test_flags_needs_a_subreddit(self):
+        self.assertIn('SUBREDDIT', self.usage_error('flags'))
+
     def test_nothing_is_sent_when_the_arguments_are_wrong(self):
         self.usage_error('read', SUBREDDIT, 'alice', '--color', 'maybe')
         self.assertEqual(self.reddit.requests, [])
@@ -369,7 +577,8 @@ class HelpTests(CliTestCase):
 
     def test_the_top_level_help(self):
         text = self.output('--help')
-        self.assertIn('read', text)
+        for command in ('read', 'add', 'flags'):
+            self.assertIn(command, text)
         self.assertIn('--cookies-from-browser', text)
         self.assertIn('--verbose', text)
 
@@ -383,6 +592,23 @@ class HelpTests(CliTestCase):
         self.assertIn('--json', text)
         self.assertIn('--local', text)
         self.assertIn('--cookies', text)
+
+    def test_the_help_for_adding(self):
+        text = self.output('add', '--help')
+        self.assertIn('SUBREDDIT', text)
+        self.assertIn('USERNAME', text)
+        self.assertIn('TEXT', text)
+        self.assertIn('--flag', text)
+        self.assertIn('--link', text)
+        self.assertIn('--cookies-from-browser', text)
+        # How to find out what a flag can be, from the help itself.
+        self.assertIn('usernotes flags', text)
+
+    def test_the_help_for_flags(self):
+        text = self.output('flags', '--help')
+        self.assertIn('SUBREDDIT', text)
+        self.assertIn('--json', text)
+        self.assertIn('--color', text)
 
 
 if __name__ == '__main__':

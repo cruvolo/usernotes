@@ -4,12 +4,23 @@ This is the front end over the rest of the package: it turns arguments into a
 `usernotes.store.UsernotesStore`, prints what was asked for, and reports
 failures in a way a shell can act on.
 
-The command implemented today is ``read``, which prints one user's notes the
-way toolbox's "User Notes" dialog shows them - see `usernotes.display`.  The
-library underneath it already reads, edits, saves and backs up a subreddit's
-notes, so ``add`` and ``backup`` are a matter of another command here.
+Three commands are implemented.  ``read`` prints one user's notes the way
+toolbox's "User Notes" dialog shows them - see `usernotes.display`; ``add``
+writes a note and then prints those notes again, read back from the wiki;
+``flags`` lists the note types the subreddit defines, because nothing else
+would tell a moderator what ``add --flag`` accepts.  The library underneath
+them can already edit a subreddit's notes and back them up, so ``backup``,
+``restore`` and ``search`` are a matter of more commands here.
 
-Two things are worth knowing before reading the code:
+Three things are worth knowing before reading the code:
+
+* **Adding is a read-modify-write of the whole page.**  The format has no
+  smaller granularity, so `add` loads the page, adds to the copy and writes it
+  back as a new revision - and the store refuses to write if the page changed
+  while it was being edited, because that would discard another moderator's
+  note.  Nothing is written until the arguments, the flag and the message have
+  all been checked, and the listing printed afterwards is read back from the
+  wiki rather than from memory, so it is also the proof that the write landed.
 
 * **Cookies are a parameter everywhere in this package, and this is the layer
   that gets them.**  ``--cookies-from-browser`` (yt-dlp's grammar, see
@@ -19,10 +30,12 @@ Two things are worth knowing before reading the code:
   Extraction happens before the first request, and a jar is never printed or
   logged, only the *names* of the cookies that were found.
 * **Exit statuses are the interface for scripts.**  ``0`` for a listing that
-  was printed, ``1`` for a request that failed or a store that could not be
-  read, ``2`` for a usage error (argparse's own).  A user with no notes is not
-  an error: the listing says so and the status stays ``0``, which is what
-  toolbox does with an empty dialog.
+  was printed or a note that was written, ``1`` for a request that failed, a
+  store that could not be read, or a write that was refused (the flag does not
+  exist, the page changed while the note was being added, the page is full),
+  ``2`` for a usage error (argparse's own).  A user with no notes is not an
+  error: the listing says so and the status stays ``0``, which is what toolbox
+  does with an empty dialog.
 """
 
 from __future__ import annotations
@@ -31,6 +44,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 
 from ._logging import Logger
@@ -43,8 +57,15 @@ from .cookies import (
     load_cookie_jar,
     parse_browser_spec,
 )
-from .display import COLOR_MODES, Style, color_enabled, render_user_notes
+from .display import (
+    COLOR_MODES,
+    Style,
+    color_enabled,
+    render_note_types,
+    render_user_notes,
+)
 from .errors import ForbiddenError, NotLoggedInError, UsernotesError
+from .format import note_type
 from .model import normalize_username
 from .store import UsernotesStore, normalize_subreddit
 
@@ -70,6 +91,18 @@ EXIT_INTERRUPTED = 130
 
 #: Verbosity levels, indexed by how many ``-v`` were given.
 _LOG_LEVELS = ('warning', 'info', 'debug')
+
+#: ``--flag`` values that mean "no flag", for a user whose notes carry one and
+#: a note that should not.  ``none`` is what toolbox's own dialog calls the
+#: untyped selection.
+_NO_FLAG = ('none', '-')
+
+#: The shapes of link that survive a save: the squashed ``l,<id>`` an older
+#: store holds, and anything `usernotes.format.squash_link` can reduce.  A link
+#: that is neither is squashed to nothing on the way to the wiki, so it is
+#: refused here rather than silently dropped (see `_link`).
+_SQUASHED_LINK_RE = re.compile(r'[lm],')
+_ABSOLUTE_LINK_RE = re.compile(r'https?://', re.IGNORECASE)
 
 
 def main(argv=None, *, client_options=None):
@@ -107,8 +140,8 @@ def main(argv=None, *, client_options=None):
     except UsernotesError as err:
         _complain(str(err))
         if _no_cookies(args) and isinstance(err, (NotLoggedInError, ForbiddenError)):
-            _complain('hint: usernotes are moderator-only, so reading them needs '
-                      'the cookies of an account that moderates '
+            _complain('hint: usernotes are moderator-only, so this needs the '
+                      'cookies of an account that moderates '
                       f'/r/{getattr(args, "subreddit", "this subreddit")}; pass '
                       '--cookies-from-browser BROWSER, or --cookies FILE with '
                       'cookies exported from a browser')
@@ -119,34 +152,78 @@ def main(argv=None, *, client_options=None):
 
 def read(args, logger, client_options):
     """``usernotes read``: print one user's notes."""
-    options = _client_options(args, client_options)
-    store = UsernotesStore(
-        args.subreddit, logger=logger, **options,
-        cookies=_load_cookies(args, logger, options['base_url']))
-    with store:
+    with _store(args, logger, client_options) as store:
         store.load()
-        user = store.find(args.username)
-        notes = () if user is None else tuple(user.notes)
-        name = args.username if user is None else user.name
+        _show(store, args, args.username)
+    return EXIT_OK
 
+
+def add(args, logger, client_options):
+    """``usernotes add``: write a note, then print the user's notes again."""
+    with _store(args, logger, client_options) as store:
+        store.load()
+        store.add(args.username, args.text, type=_flag(args, store, logger),
+                  link=args.link)
+        store.save()
+        # The notes are read back from the wiki rather than printed from
+        # memory: a listing that was re-read is also the proof that the note
+        # landed, and shows what reddit actually holds - the flag the note was
+        # stored with, the author it was recorded as.
+        store.reload()
+        _show(store, args, args.username)
+    return EXIT_OK
+
+
+def flags(args, logger, client_options):
+    """``usernotes flags``: list the flags a subreddit's notes can carry."""
+    with _store(args, logger, client_options) as store:
+        note_types = store.note_types()
         if args.json:
-            print(json.dumps(_as_json(store, name, user, notes),
-                             indent=2, ensure_ascii=False))
+            print(json.dumps(
+                {'subreddit': store.subreddit,
+                 'flags': [type_.as_dict() for type_ in note_types]},
+                indent=2, ensure_ascii=False))
             return EXIT_OK
-
-        print(render_user_notes(
-            name, notes,
-            subreddit=store.subreddit,
-            # Only worth a request (the subreddit's toolbox config) if there is
-            # a note to name and colour.
-            note_types=store.note_types() if notes else (),
-            style=Style(color_enabled(args.color)),
-            tz=None if args.local else datetime.timezone.utc,
-            has_page=store.exists), end='')
+        print(render_note_types(note_types, subreddit=store.subreddit,
+                                style=Style(color_enabled(args.color))), end='')
     return EXIT_OK
 
 
 # -- arguments ---------------------------------------------------------------
+
+def _note_text(value):
+    """An argparse ``type`` for the note itself.
+
+    Surrounding whitespace goes - toolbox's edit dialog trims it too - and a
+    note that is left empty is a usage error here rather than a refusal from
+    the store later: the format has no way to store an empty note, so there is
+    nothing to send for one.
+    """
+    text = value.strip()
+    if not text:
+        raise argparse.ArgumentTypeError('the note is empty')
+    return text
+
+
+def _link(value):
+    """An argparse ``type`` for ``--link``, checked before anything is sent.
+
+    Only link shapes the storage format keeps are accepted: an absolute URL, a
+    reddit path, or the squashed ``l,<id>`` an older store holds.  Anything
+    else - a bare word, a title - is squashed to nothing on the way to the
+    wiki, so the note would be written without the link it was given and the
+    moderator would have no way to tell; it is a usage error instead.
+    """
+    link = value.strip()
+    if not link:
+        return ''       # --link '' is "no link", which is the default anyway
+    if (_SQUASHED_LINK_RE.match(link) or _ABSOLUTE_LINK_RE.match(link)
+            or link.startswith('/')):
+        return link
+    raise argparse.ArgumentTypeError(
+        f'not a reddit link: {value!r} (expected an absolute URL, a path such as '
+        '/r/toolbox/comments/abc123/, or a squashed l,<id> from an older store)')
+
 
 def _checked(normalizer):
     """An argparse ``type`` that keeps a ValueError's message.
@@ -174,10 +251,10 @@ def build_parser():
         prog=PROG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            'Read the notes the reddit Moderator Toolbox keeps for a subreddit.\n'
-            'The notes live on the subreddit\'s wiki page, and only its moderators\n'
-            'may read them, so a session is usually needed: give one with\n'
-            '--cookies-from-browser or --cookies.'),
+            'Read and add to the notes the reddit Moderator Toolbox keeps for a\n'
+            'subreddit.  The notes live on the subreddit\'s wiki page, and only its\n'
+            'moderators may read or write them, so a session is usually needed: give\n'
+            'one with --cookies-from-browser or --cookies.'),
         epilog=(
             'usernotes is a companion to the toolbox extension, not a replacement\n'
             'for it: it reads and writes the same wiki page, and changes made there\n'
@@ -192,11 +269,13 @@ def build_parser():
                            help='log errors only')
 
     commands = parser.add_subparsers(dest='command', metavar='COMMAND', required=True)
-    _add_read(commands)
+    _read_command(commands)
+    _add_command(commands)
+    _flags_command(commands)
     return parser
 
 
-def _add_read(commands):
+def _read_command(commands):
     parser = commands.add_parser(
         'read',
         help="print one user's usernotes",
@@ -212,23 +291,101 @@ def _add_read(commands):
             '  usernotes read toolbox alice --json | jq .notes\n'),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[_connection_options()])
-    parser.add_argument('subreddit', metavar='SUBREDDIT',
-                        type=_checked(normalize_subreddit),
-                        help='the subreddit, e.g. toolbox or /r/toolbox')
+    _subject_arguments(parser)
+    _output_arguments(parser, times=True)
+    parser.set_defaults(run=read)
+    return parser
+
+
+def _add_command(commands):
+    parser = commands.add_parser(
+        'add',
+        help="add a note to a user's usernotes",
+        description=(
+            'Add a note for USERNAME to /r/SUBREDDIT, then print their notes again,\n'
+            'read back from the wiki: the new note is shown as it was stored, with\n'
+            'the flag it was stored with and the moderator it was recorded against.'),
+        epilog=(
+            'examples:\n'
+            '  usernotes add toolbox alice "spam watch, third time this week" \\\n'
+            '      --flag spamwatch --cookies-from-browser firefox\n'
+            '  usernotes add toolbox alice "banned for abuse" --flag ban \\\n'
+            '      --link https://www.reddit.com/r/toolbox/comments/abc123/\n'
+            '  usernotes flags toolbox            # what --flag can be\n'
+            '\n'
+            'Without --flag the note keeps the flag of the user\'s most recent\n'
+            'flagged note, so an established flag does not have to be typed out\n'
+            'again every time; --flag none writes a note with no flag at all.'),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        parents=[_connection_options()])
+    _subject_arguments(parser)
+    parser.add_argument('text', metavar='TEXT', type=_note_text,
+                        help='the note itself, in quotes if it has spaces')
+    parser.add_argument('--flag', metavar='FLAG', default=None,
+                        help="the flag to set, by name or key as `usernotes flags "
+                             "SUBREDDIT` lists it; defaults to the user's most "
+                             "recent flag, and 'none' sets no flag")
+    parser.add_argument('--link', metavar='URL', type=_link, default='',
+                        help='what the note is about: an absolute URL, or a path '
+                             'such as /r/toolbox/comments/abc123/')
+    _output_arguments(parser, times=True)
+    parser.set_defaults(run=add)
+    return parser
+
+
+def _flags_command(commands):
+    parser = commands.add_parser(
+        'flags',
+        help='list the flags a subreddit can put on a note',
+        description=(
+            'Print the note flags /r/SUBREDDIT defines: its own, from the toolbox\n'
+            'config page, or toolbox\'s defaults where it has not configured any.\n'
+            'Each is shown with the colour it appears in, and with both the name\n'
+            'and the key that `usernotes add --flag` accepts.'),
+        epilog=(
+            'examples:\n'
+            '  usernotes flags toolbox --cookies-from-browser firefox\n'
+            '  usernotes flags toolbox --json | jq -r \'.flags[].key\'\n'),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        parents=[_connection_options()])
+    _subreddit_argument(parser)
+    _output_arguments(parser, times=False, json_help=(
+        'print the flags as JSON instead of the listing, for scripts: '
+        'subreddit and flags[] (key, text, color)'))
+    parser.set_defaults(run=flags)
+    return parser
+
+
+def _subject_arguments(parser):
+    """``SUBREDDIT`` and ``USERNAME``, which the per-user commands start with."""
+    _subreddit_argument(parser)
     parser.add_argument('username', metavar='USERNAME',
                         type=_checked(normalize_username),
                         help='the user, e.g. alice, u/alice or /u/alice')
-    parser.add_argument('--json', action='store_true',
-                        help='print the notes as JSON instead of the listing, for '
-                             'scripts: subreddit, page, schema, exists, name, '
-                             'aliases, notes[] and warnings[]')
+
+
+def _subreddit_argument(parser):
+    parser.add_argument('subreddit', metavar='SUBREDDIT',
+                        type=_checked(normalize_subreddit),
+                        help='the subreddit, e.g. toolbox or /r/toolbox')
+
+
+def _output_arguments(parser, *, times, json_help=(
+        'print the notes as JSON instead of the listing, for scripts: '
+        'subreddit, page, schema, exists, name, aliases, notes[] and warnings[]')):
+    """How the work is shown: ``--json``, ``--color``, and ``--local``.
+
+    :param times: whether this command shows note times, and so takes
+        ``--local``.
+    """
+    parser.add_argument('--json', action='store_true', help=json_help)
     parser.add_argument('--color', choices=COLOR_MODES, default='auto', metavar='WHEN',
                         help='colour the output: auto (the default) colours it when '
                              'stdout is a terminal, always, or never')
-    parser.add_argument('--local', action='store_true',
-                        help='show note times in the local time zone rather than UTC')
-    parser.set_defaults(run=read)
-    return parser
+    if times:
+        parser.add_argument('--local', action='store_true',
+                            help='show note times in the local time zone rather '
+                                 'than UTC')
 
 
 def _connection_options():
@@ -275,6 +432,64 @@ def _load_cookies(args, logger, base_url):
         logger.warning(f'none of the cookies that were loaded apply to {base_url}; '
                        'the request will be anonymous')
     return jar
+
+
+def _store(args, logger, client_options):
+    """The store a command works on: client built, cookies loaded."""
+    options = _client_options(args, client_options)
+    return UsernotesStore(args.subreddit, logger=logger, **options,
+                          cookies=_load_cookies(args, logger, options['base_url']))
+
+
+def _show(store, args, username):
+    """Print one user's notes: the toolbox-style listing, or JSON."""
+    user = store.find(username)
+    notes = () if user is None else tuple(user.notes)
+    name = username if user is None else user.name
+    if args.json:
+        print(json.dumps(_as_json(store, name, user, notes), indent=2,
+                         ensure_ascii=False))
+        return
+    print(render_user_notes(
+        name, notes,
+        subreddit=store.subreddit,
+        # Only worth a request (the subreddit's toolbox config) if there is a
+        # note to name and colour.
+        note_types=store.note_types() if notes else (),
+        style=Style(color_enabled(args.color)),
+        tz=None if args.local else datetime.timezone.utc,
+        has_page=store.exists), end='')
+
+
+def _flag(args, store, logger):
+    """The flag for a note being added: the one named, or the user's last one.
+
+    Without ``--flag`` the flag is the one on the most recent note of theirs
+    that carries one - not necessarily their newest note, because a note
+    written without a flag should not hide an older one.  The point is that a
+    moderator who has flagged this user before does not type the flag out
+    again every time they add to the same story.
+
+    A flag the subreddit no longer defines is not carried over: `add` would
+    refuse it, so the note goes in without a flag and says so, rather than
+    failing on something the moderator did not ask for.
+    """
+    if args.flag is not None:
+        value = args.flag.strip()
+        return None if value.lower() in _NO_FLAG else value
+
+    recent = next((note.type for note in store.notes(args.username) if note.type),
+                  None)
+    if recent is None:
+        return None
+    if note_type(recent, store.note_types()) is None:
+        logger.warning(f'the most recent flag on u/{args.username}, {recent!r}, is '
+                       f'not one /r/{store.subreddit} defines any more; the note '
+                       'is being added without a flag')
+        return None
+    logger.info(f'carrying over the flag {recent!r} from an earlier note on '
+                f'u/{args.username}')
+    return recent
 
 
 def _client_options(args, client_options):
