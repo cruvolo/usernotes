@@ -46,6 +46,15 @@ Three things are deliberately *not* toolbox's behaviour:
   layer escapes instead of the reader (see `usernotes.format`, which keeps the
   stored text exactly as it is).
 
+Three more things are rendered here.  A search result is the per-user listing
+with the user added as its first column and each note on one line, since what
+a search turns up is notes across users rather than one user's history.  A
+single note on one line looks like toolbox's usernotes manager -
+``[Type] the note - by /u/mod - 3 days ago`` - with the absolute time added,
+which is what ``usernotes remove`` shows for the note it took away.  And
+`parse_time` reads that absolute time back, so a time copied out of a listing
+can name a note on the command line.
+
 Colour is off unless asked for; `color_enabled` decides, and `Style` is what
 does the wrapping, so nothing in this module has to check twice.
 """
@@ -67,8 +76,11 @@ __all__ = [
     'color_enabled',
     'color_index',
     'format_time',
+    'parse_time',
     'relative_time',
+    'render_note',
     'render_note_types',
+    'render_search_results',
     'render_user_notes',
     'safe_text',
 ]
@@ -268,6 +280,49 @@ def format_time(when, tz=datetime.timezone.utc, *, zone=False):
     return text
 
 
+def parse_time(value):
+    """Read a timestamp back; the way in for what `format_time` writes out.
+
+    A listing prints each note's time as ``2026-11-04 06:12:45 UTC``, and this
+    turns that - copied straight out of the output - back into a time, which is
+    how a note is named on the command line: ``usernotes remove --timestamp``.
+    A time with no zone is UTC, because that is what a listing shows unless it
+    was asked for local times; ``2026-11-04T06:12:45+00:00`` and the other ISO
+    8601 spellings `datetime.datetime.fromisoformat` takes are read too.
+
+    :param value: the timestamp, as text.
+    :returns: an aware `datetime.datetime`.
+    :raises ValueError: if *value* is not a timestamp, or names a zone that
+        cannot be resolved: a local zone name would mean two different
+        instants depending on the machine reading it, so those are refused
+        rather than guessed at.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f'timestamp is {type(value).__name__}, not text: {value!r}')
+    text = value.strip()
+    if not text:
+        raise ValueError('timestamp is empty')
+
+    words = text.split()
+    if len(words) > 1 and words[-1].casefold() in ('utc', 'gmt'):
+        text = ' '.join(words[:-1])         # the zone our own output names
+    elif len(words) > 1 and words[-1].isalpha():
+        raise ValueError(
+            f'cannot read the zone {words[-1]!r} in {value!r}; give the time in '
+            'UTC, as `usernotes read` prints it (it shows local times only when '
+            'asked for them with --local)')
+
+    try:
+        moment = datetime.datetime.fromisoformat(text)
+    except ValueError as err:
+        raise ValueError(
+            f'not a timestamp: {value!r} (expected something like '
+            f'"2026-11-04 06:12:45 UTC", as `usernotes read` prints it)') from err
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=datetime.timezone.utc)
+    return moment
+
+
 def safe_text(value):
     """*value* as text that is safe to print, never ``None``.
 
@@ -330,8 +385,7 @@ def render_user_notes(username, notes, *, subreddit, note_types=(), style=None,
     if not notes:
         lines.append(style.color(MUTED, f'/r/{subreddit} - no notes for /u/{name}'))
         return '\n'.join(lines) + '\n'
-    lines.append(style.color(
-        MUTED, f'/r/{subreddit} - {len(notes)} note{"" if len(notes) == 1 else "s"}'))
+    lines.append(style.color(MUTED, f'/r/{subreddit} - {_count(len(notes), "note")}'))
     lines.append('')
 
     now = datetime.datetime.now(datetime.timezone.utc) if now is None else now
@@ -339,11 +393,7 @@ def render_user_notes(username, notes, *, subreddit, note_types=(), style=None,
     for note in notes:
         rows.extend(_note_rows(note, note_types, style, now, tz))
 
-    width = max(len(author.plain) for author, _ in rows)
-    lines.append(f'{"Author":<{width}}  Note')
-    for author, text in rows:
-        padding = ' ' * (width - len(author.plain))
-        lines.append(f'{author.styled}{padding}  {text.styled}'.rstrip())
+    lines.extend(_table(('Author', 'Note'), rows))
     return '\n'.join(lines) + '\n'
 
 
@@ -369,18 +419,162 @@ def render_note_types(note_types, *, subreddit, style=None):
         lines.append(style.color(MUTED, f'/r/{subreddit} - no flags'))
         return '\n'.join(lines) + '\n'
 
-    names = [safe_text(note_type.text) for note_type in types]
-    width = max(len(name) for name in names)
     lines.append('')
-    lines.append(f'{"Flag":<{width}}  Key')
-    for name, note_type in zip(names, types):
-        color = style.color(color_index(note_type.color), name)
-        key = style.color(MUTED, safe_text(note_type.key))
-        lines.append(f'{color}{" " * (width - len(name))}  {key}'.rstrip())
+    rows = []
+    for note_type in types:
+        name = safe_text(note_type.text)
+        key = safe_text(note_type.key)
+        rows.append((Cell(name, style.color(color_index(note_type.color), name)),
+                     Cell(key, style.color(MUTED, key))))
+    lines.extend(_table(('Flag', 'Key'), rows))
+    return '\n'.join(lines) + '\n'
+
+
+def render_note(note, *, note_types=(), style=None, now=None,
+                tz=datetime.timezone.utc):
+    """Render one note as a single line, with no trailing newline.
+
+    ``[Ban] repeated abuse - by /u/creesch - 3 days ago (2026-11-05 06:11:20
+    UTC)``: the shape toolbox's usernotes manager gives a note, with the
+    absolute time after the relative one, so that it can be read off and used
+    to name the note again - see `parse_time`.  This is what ``usernotes
+    remove`` prints for the note it took away.
+
+    :param note: the `usernotes.format.Note`.
+    :param note_types: the subreddit's `usernotes.format.NoteType` table, for
+        naming and colouring the note's flag.
+    :param style: a `Style`; colour is off when this is not given.
+    :param now: what "now" is for the relative time, for tests.
+    :param tz: the zone the absolute time is shown in; ``None`` for the local.
+    :returns: one line of text.
+    """
+    style = Style() if style is None else style
+    now = datetime.datetime.now(datetime.timezone.utc) if now is None else now
+    return _note_line(note, note_types, style, now, tz).styled
+
+
+def render_search_results(pattern, matches, *, subreddit, note_types=(), style=None,
+                          now=None, tz=datetime.timezone.utc, has_page=True):
+    """Render the notes a search found, with the user each belongs to.
+
+    A listing like `render_user_notes`, with the user as an extra first column
+    and each note on one line (see `render_note`): what a search turns up is
+    scattered across users, so whose note it is has to be on every line, and
+    keeping the note text next to the user leaves the author and time trailing
+    it where a column of dates would push the text off a narrow terminal.
+
+    :param pattern: what was searched for; the title says so, since a listing
+        of matches is only readable next to what it matched.
+    :param matches: ``(username, note)`` pairs, as `usernotes.search.search`
+        returns them, in the order they are to be shown.
+    :param subreddit: the subreddit they were read from.
+    :param note_types: the subreddit's `usernotes.format.NoteType` table.
+    :param style: a `Style`; colour is off when this is not given.
+    :param now: what "now" is for the relative times, for tests.
+    :param tz: the zone absolute times are shown in; ``None`` for the local.
+    :param has_page: whether the subreddit has a usernotes page at all, so
+        that "nothing matched" and "there are no notes" can be told apart.
+    :returns: the text to print, newline terminated.
+    """
+    style = Style() if style is None else style
+    subreddit = safe_text(subreddit)
+    matches = list(matches)
+
+    lines = [style.bold(f'Usernotes matching {safe_text(pattern)!r} - /r/{subreddit}')]
+    if not has_page:
+        lines.append(style.color(MUTED, f'/r/{subreddit} - no usernotes page yet'))
+        return '\n'.join(lines) + '\n'
+    if not matches:
+        lines.append(style.color(MUTED, 'no notes match'))
+        return '\n'.join(lines) + '\n'
+
+    users = len({username for username, _ in matches})
+    lines.append(style.color(
+        MUTED, f'{_count(len(matches), "note")} for {_count(users, "user")}'))
+    lines.append('')
+
+    now = datetime.datetime.now(datetime.timezone.utc) if now is None else now
+    rows = []
+    for username, note in matches:
+        name = safe_text(username)
+        rows.append((Cell(name, style.bold(name)),
+                     _note_line(note, note_types, style, now, tz)))
+        link = safe_text(note.link)
+        if link:
+            rows.append((Cell(), Cell(link, style.color(LINK, link))))
+    lines.extend(_table(('User', 'Note'), rows))
     return '\n'.join(lines) + '\n'
 
 
 # -- internals ---------------------------------------------------------------
+
+def _table(headers, rows):
+    """Lay `Cell`s out in columns, with the last column left unpadded.
+
+    Every listing here is a grid of cells, and ANSI escapes take no space on
+    screen while being characters in the string: the widths come from each
+    cell's ``plain`` side, and the padding is added to the styled one, so a
+    coloured listing lines up exactly as the plain one does.
+
+    :param headers: the column names, plain text.
+    :param rows: one tuple of `Cell` per row, one per column.
+    :returns: a list of lines.
+    """
+    widths = [max([len(name)] + [len(row[index].plain) for row in rows])
+              for index, name in enumerate(headers)]
+    lines = ['  '.join(f'{name:<{width}}'
+                       for name, width in zip(headers, widths)).rstrip()]
+    for row in rows:
+        lines.append('  '.join(
+            f'{cell.styled}{" " * (width - len(cell.plain))}'
+            for cell, width in zip(row, widths)).rstrip())
+    return lines
+
+
+def _count(number, thing):
+    """``1 note`` / ``3 notes``, for the line above a listing."""
+    return f'{number} {thing}{"" if number == 1 else "s"}'
+
+
+def _date_text(note, now, tz):
+    """When a note was written: the relative time, then the absolute one.
+
+    The absolute time is there because a terminal has no tooltip to keep it in
+    (toolbox shows its listings with ``jquery.timeago`` and the exact time in
+    the ``title``), and because it is the string that names the note on the
+    command line - see `parse_time`.
+    """
+    if not note.has_time:
+        return 'unknown date'
+    when = note.datetime()          # aware, always UTC: `tz` is for display
+    return f'{relative_time(when, now)} ({format_time(when, tz, zone=True)})'
+
+
+def _note_line(note, note_types, style, now, tz):
+    """One note as a single line of `Cell`: flag, text, author, time.
+
+    Toolbox's usernotes manager writes a note this way (``usernotes.js:1051``),
+    with the type in its colour, the note itself, and then who wrote it and
+    when after a dash each.  The flag and the text take the type's colour, as
+    they do in the per-user listing.
+    """
+    tag, color = _type_tag(note.type, note_types)
+    text = safe_text(note.display_text())
+    if tag and text:
+        body_plain = f'{tag} {text}'
+        body_styled = f'{style.color(color, tag)} {style.color(color, text)}'
+    else:
+        body_plain = tag or text
+        body_styled = style.color(color, body_plain)
+
+    author = safe_text(note.mod)
+    author = f'/u/{author}' if author else 'unknown'
+    date = _date_text(note, now, tz)
+    return Cell(
+        plain=f'{body_plain} - by {author} - {date}',
+        styled=f'{body_styled} - {style.color(MUTED, f"by {author}")} - '
+               f'{style.color(MUTED, date)}')
+
 
 def _note_rows(note, note_types, style, now, tz):
     """The row (or two) toolbox uses for one note.
@@ -396,12 +590,7 @@ def _note_rows(note, note_types, style, now, tz):
     """
     author = safe_text(note.mod)
     mod = f'/u/{author}' if author else 'unknown'
-    when = note.datetime()          # aware, always UTC: `tz` is for display
-    if note.has_time:
-        date = (f'{relative_time(when, now)} '
-                f'({format_time(when, tz, zone=True)})')
-    else:
-        date = 'unknown date'
+    date = _date_text(note, now, tz)
 
     tag, color = _type_tag(note.type, note_types)
     text = safe_text(note.display_text())

@@ -18,8 +18,11 @@ from usernotes.display import (
     color_enabled,
     color_index,
     format_time,
+    parse_time,
     relative_time,
+    render_note,
     render_note_types,
+    render_search_results,
     render_user_notes,
     safe_text,
 )
@@ -349,6 +352,161 @@ class RenderTests(unittest.TestCase):
     def test_the_username_is_escaped(self):
         listing = render_user_notes('a\x1b[31mb', [], subreddit='test')
         self.assertIn('User Notes - /u/a[31mb', listing)
+
+
+class ParseTimeTests(unittest.TestCase):
+    """Reading back a timestamp a listing printed."""
+
+    def test_it_reads_back_what_format_time_writes(self):
+        for moment in (at(2019, 5, 31, 13, 52, 30), at(2026, 11, 7, 7, 23, 0),
+                       at(1999, 12, 31, 23, 59, 59)):
+            with self.subTest(moment=moment):
+                self.assertEqual(parse_time(format_time(moment, UTC, zone=True)),
+                                 moment)
+
+    def test_a_time_with_no_zone_is_utc(self):
+        self.assertEqual(parse_time('2019-05-31 13:52:30'), at(2019, 5, 31, 13, 52, 30))
+
+    def test_the_zone_may_be_spelled_out(self):
+        for zone in ('UTC', 'utc', 'GMT'):
+            with self.subTest(zone=zone):
+                self.assertEqual(parse_time(f'2019-05-31 13:52:30 {zone}'),
+                                 at(2019, 5, 31, 13, 52, 30))
+
+    def test_the_iso_8601_spellings(self):
+        self.assertEqual(parse_time('2019-05-31T13:52:30Z'), at(2019, 5, 31, 13, 52, 30))
+        self.assertEqual(parse_time('2019-05-31T13:52:30+00:00'),
+                         at(2019, 5, 31, 13, 52, 30))
+        self.assertEqual(parse_time('2019-05-31T15:52:30+02:00'),
+                         at(2019, 5, 31, 13, 52, 30))
+
+    def test_surrounding_whitespace_is_ignored(self):
+        self.assertEqual(parse_time('  2019-05-31 13:52:30 UTC\n'),
+                         at(2019, 5, 31, 13, 52, 30))
+
+    def test_a_zone_that_cannot_be_resolved_is_refused(self):
+        # Two different instants depending on who reads it, so not guessed at.
+        with self.assertRaises(ValueError) as caught:
+            parse_time('2019-05-31 13:52:30 EST')
+        self.assertIn('UTC', str(caught.exception))
+
+    def test_things_that_are_not_timestamps(self):
+        for value in ('', '   ', 'yesterday', '13:52:30', '2019-13-45 00:00:00',
+                      None, 42):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    parse_time(value)
+
+
+class NoteLineTests(unittest.TestCase):
+    """One note on one line, as toolbox's manager writes it."""
+
+    now = at(2026, 1, 1, 12, 0, 0)
+
+    def setUp(self):
+        self.note = Note(text='repeated abuse', time=ms(at(2025, 12, 30, 12, 0, 0)),
+                         mod='creesch', type='ban')
+
+    def render(self, note=None, **kwargs):
+        kwargs.setdefault('note_types', DEFAULT_NOTE_TYPES)
+        kwargs.setdefault('now', self.now)
+        return render_note(self.note if note is None else note, **kwargs)
+
+    def test_the_line(self):
+        self.assertEqual(
+            self.render(),
+            '[Ban] repeated abuse - by /u/creesch - 2 days ago '
+            '(2025-12-30 12:00:00 UTC)')
+
+    def test_it_has_no_trailing_newline(self):
+        self.assertNotIn('\n', self.render())
+
+    def test_a_note_with_nothing_but_text(self):
+        self.assertEqual(self.render(Note(text='odd')),
+                         'odd - by unknown - unknown date')
+
+    def test_it_is_coloured_the_way_the_listing_is(self):
+        listing = self.render(style=Style(True))
+        self.assertIn('\x1b[38;5;196m[Ban]\x1b[0m \x1b[38;5;196mrepeated abuse\x1b[0m',
+                      listing)
+        self.assertIn('\x1b[38;5;248mby /u/creesch\x1b[0m', listing)
+
+    def test_it_is_escaped(self):
+        note = Note(text='look \x1b[2Jout', time=ms(self.now), mod='bo\x1b[31b')
+        listing = self.render(note)
+        self.assertEqual(listing, 'look [2Jout - by /u/bo[31b - less than a minute '
+                                  'ago (2026-01-01 12:00:00 UTC)')
+
+
+class SearchListingTests(unittest.TestCase):
+    """The listing ``usernotes search`` prints."""
+
+    now = at(2026, 1, 1, 12, 0, 0)
+
+    def setUp(self):
+        self.matches = [
+            ('alice', Note(text='second note', time=ms(at(2025, 12, 30, 12, 0, 0)),
+                           mod='creesch', type='ban',
+                           link='https://www.reddit.com/r/test/comments/abc/')),
+            ('bobthespammer', Note(text='spam again',
+                                   time=ms(at(2025, 1, 1, 12, 0, 0)),
+                                   mod='othermod', type='spamwatch')),
+        ]
+
+    def render(self, matches=None, **kwargs):
+        kwargs.setdefault('subreddit', 'test')
+        kwargs.setdefault('note_types', DEFAULT_NOTE_TYPES)
+        kwargs.setdefault('now', self.now)
+        return render_search_results('spam', self.matches if matches is None
+                                     else matches, **kwargs)
+
+    def test_the_listing(self):
+        width = len('bobthespammer')
+        self.assertEqual(self.render().splitlines(), [
+            "Usernotes matching 'spam' - /r/test",
+            '2 notes for 2 users',
+            '',
+            f'{"User":<{width}}  Note',
+            f'{"alice":<{width}}  [Ban] second note - by /u/creesch - '
+            '2 days ago (2025-12-30 12:00:00 UTC)',
+            ' ' * (width + 2) + 'https://www.reddit.com/r/test/comments/abc/',
+            f'{"bobthespammer":<{width}}  [Spam Watch] spam again - by /u/othermod - '
+            'about a year ago (2025-01-01 12:00:00 UTC)',
+        ])
+
+    def test_one_note_for_one_user(self):
+        listing = self.render(matches=self.matches[:1])
+        self.assertIn('1 note for 1 user\n', listing)
+
+    def test_the_note_text_takes_the_type_colour(self):
+        listing = self.render(style=Style(True))
+        self.assertIn('\x1b[38;5;196m[Ban]\x1b[0m \x1b[38;5;196msecond note\x1b[0m',
+                      listing)
+        self.assertIn('\x1b[1malice\x1b[0m', listing)     # the user stands out
+        self.assertIn('\x1b[38;5;33mhttps://www.reddit.com/r/test/comments/abc/',
+                      listing)                            # and the link is a link
+
+    def test_a_coloured_listing_still_lines_up(self):
+        plain = self.render().splitlines()
+        coloured = self.render(style=Style(True)).splitlines()
+        self.assertEqual(len(plain), len(coloured))
+        for wanted, line in zip(plain, coloured):
+            self.assertEqual(RenderTests.without_escapes(line), wanted)
+
+    def test_nothing_matched(self):
+        self.assertEqual(self.render(matches=[]).splitlines(),
+                         ["Usernotes matching 'spam' - /r/test", 'no notes match'])
+
+    def test_a_subreddit_with_no_page(self):
+        listing = self.render(matches=[], has_page=False)
+        self.assertEqual(listing.splitlines(),
+                         ["Usernotes matching 'spam' - /r/test",
+                          '/r/test - no usernotes page yet'])
+
+    def test_the_pattern_is_escaped_and_quoted(self):
+        listing = render_search_results('spam\x1b[31m', [], subreddit='test')
+        self.assertIn("Usernotes matching 'spam[31m'", listing)
+        self.assertNotIn('\x1b', listing)
 
 
 class NoteTypeListingTests(unittest.TestCase):
