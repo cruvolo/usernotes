@@ -57,6 +57,11 @@ You may take code from both these projects to use within this project as needed.
 
 3. Create a command line interface to back up a subreddit's usernotes.
 
+## Repository layout:
+
+  * `usernotes/` -- contains the python code
+  * `usernotes/_vendor/` -- code that was borrowed from yt-dlp for browser cookies
+
 ## Code
 
 Use standard python3 where possible.  Use necessary libraries, and make
