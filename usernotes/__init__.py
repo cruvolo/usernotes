@@ -41,16 +41,17 @@ and gets them, from ``--cookies-from-browser`` or ``--cookies FILE``.
 
 The commands implemented so far are ``usernotes read SUBREDDIT USERNAME``,
 which prints one user's notes; ``usernotes add SUBREDDIT USERNAME TEXT``, which
-writes a note and prints those notes again, read back from the wiki; and
+writes a note and prints those notes again, read back from the wiki;
 ``usernotes flags SUBREDDIT``, which lists the note types - the flags - the
-subreddit defines.  The library underneath them can already back a store up, so
-``backup``, ``restore`` and ``search`` are a matter of more commands in
-`usernotes.cli`.
+subreddit defines; and ``usernotes backup SUBREDDIT`` / ``usernotes restore
+SUBREDDIT FILE``, which write the whole wiki page to a file and put such a file
+back.  ``search`` is a matter of one more command in `usernotes.cli`.
 
 A first look at a subreddit's notes, from a shell and from python::
 
     $ usernotes read toolbox alice --cookies-from-browser firefox
     $ usernotes add toolbox alice "banned for abuse" --flag ban
+    $ usernotes backup toolbox --directory ~/usernotes-backups
 
     from usernotes import cookies
     from usernotes.store import UsernotesStore
@@ -75,7 +76,7 @@ from .format import (
     parse_page,
 )
 from .model import Notes, UserNotes, normalize_username
-from .store import Backup, UsernotesStore, normalize_subreddit
+from .store import Backup, Restore, UsernotesStore, normalize_subreddit
 
 __all__ = [
     'Backup',
@@ -87,6 +88,7 @@ __all__ = [
     'Notes',
     'Page',
     'RedditWikiClient',
+    'Restore',
     'User',
     'UsernotesError',
     'UsernotesStore',

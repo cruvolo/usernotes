@@ -72,7 +72,8 @@ You may take code from both these projects to use within this project as needed.
 Within `usernotes/`:
 
   * `store.py` -- the facade a front end uses: `UsernotesStore` loads a
-    subreddit's notes, edits them, saves them back, backs them up
+    subreddit's notes, edits them, saves them back, backs them up and restores
+    them from a backup
   * `format.py` -- the on-wiki storage format (page JSON, its zlib/base64
     blob, the constants pools, link squashing, note types)
   * `model.py` -- the in-memory notes collection (usernames, ordering)
@@ -119,7 +120,8 @@ user know.
 
 The library is in place: reading, editing, saving and backing up usernotes
 all work against reddit's wiki API, with tests that never touch reddit (a
-throwaway HTTP server on 127.0.0.1 stands in for it).  Goals 1 and 2 are done:
+throwaway HTTP server on 127.0.0.1 stands in for it).  Goals 1, 2 and 3 are
+done:
 
   * `usernotes read SUBREDDIT USERNAME` prints one user's notes the way
     toolbox's "User Notes" dialog shows them
@@ -129,11 +131,17 @@ throwaway HTTP server on 127.0.0.1 stands in for it).  Goals 1 and 2 are done:
     of the user's most recent flagged note; `--flag none` sets none.
   * `usernotes flags SUBREDDIT` lists the flags the subreddit defines, which
     is how a moderator finds out what `--flag` accepts
+  * `usernotes backup SUBREDDIT` writes the whole wiki page to a file exactly
+    as reddit returns it, and `usernotes restore SUBREDDIT FILE` writes such a
+    file back as a new revision - also exactly, so a page this tool cannot
+    decode is still backed up and still restorable.  Restoring replaces the
+    page rather than editing it, so it reads the page first, refuses a file
+    that is not a usernotes page unless `--force`, and takes `--dry-run`
 
-All three take `--cookies-from-browser` / `--cookies FILE` for a session, and
-`--json` for scripts.  Goals 3 and 4 (`backup`, `restore`, `search`) are not
-written yet - the library calls they need are already there, and `cli.py` is
-where they go.
+All of them take `--cookies-from-browser` / `--cookies FILE` for a session, and
+`--json` for scripts.  Goal 4 (`search`) is not written yet - the pieces it
+needs are in `usernotes.model` and `usernotes.format`, and `cli.py` is where it
+goes.
 
 `usernotes read` has been run against a real subreddit's notes, from Firefox
 cookies, and works.  Nothing else here has.

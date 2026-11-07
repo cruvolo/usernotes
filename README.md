@@ -9,9 +9,10 @@ encoded JSON, and this package reads, edits and backs that store up outside a
 browser.  It works on the same wiki page toolbox does, so a note added on
 either side shows up in both.
 
-Reading and adding are implemented: `usernotes read`, `usernotes add` and
-`usernotes flags`.  Backing up, restoring and searching are still to come; the
-library underneath them (`usernotes.store`) already does the work.
+Reading, adding, backing up and restoring are implemented: `usernotes read`,
+`usernotes add`, `usernotes flags`, `usernotes backup` and `usernotes restore`.
+Searching is still to come; the library underneath it (`usernotes.store`)
+already does the work.
 
 ## Requirements
 
@@ -56,6 +57,8 @@ usernotes [-v|-q] COMMAND [options] ...
 | `usernotes read SUBREDDIT USERNAME` | Print a user's notes. |
 | `usernotes add SUBREDDIT USERNAME TEXT` | Add a note, then print their notes again. |
 | `usernotes flags SUBREDDIT` | List the flags a note can carry. |
+| `usernotes backup SUBREDDIT` | Save the whole usernotes page to a file. |
+| `usernotes restore SUBREDDIT FILE` | Put such a file back as a new wiki revision. |
 
 Names are matched ignoring case and the `u/` prefix, and so are subreddit names
 (`toolbox` and `/r/toolbox` are the same).  Reading a subreddit's notes normally
@@ -156,6 +159,61 @@ Bot Ban           botban
 An `add` with a flag the subreddit does not define fails with that list in the
 message, so a typo is caught before anything is written.
 
+### Backing up
+
+`usernotes backup` writes the whole page to a file, exactly as reddit returns
+it.  Nothing is re-encoded or re-serialised, so a page this tool cannot read is
+still backed up whole, and a page kept at an older schema version is backed up
+as it stands.  The file is what `restore` writes back.
+
+```sh
+# usernotes_<subreddit>_<UTC timestamp>.json in the current directory
+usernotes backup toolbox --cookies-from-browser firefox
+
+# ... or wherever you want it
+usernotes backup toolbox --directory ~/usernotes-backups
+usernotes backup toolbox --output before-the-cleanup.json
+```
+
+One line says what was written:
+
+```
+usernotes_toolbox_20261107T061743Z.json: 345 notes for 12 users (41233 bytes)
+```
+
+### Restoring
+
+`usernotes restore` writes a backup file over the page as a new wiki revision.
+It is the one command here that can take notes away, because it replaces the
+page instead of editing it; it is meant for the day someone wipes the notes, or
+for putting a page straight after a bad bulk edit.
+
+```sh
+# say what it would do, and write nothing
+usernotes restore toolbox usernotes_toolbox_20261107T061743Z.json --dry-run
+
+# do it
+usernotes restore toolbox usernotes_toolbox_20261107T061743Z.json \
+  --cookies-from-browser firefox
+```
+
+What keeps it honest:
+
+* the file has to decode as a usernotes page; one that does not is refused
+  rather than written over the notes.  `--force` puts it back anyway, for
+  restoring a backup of a page that was already damaged;
+* the page is read first, so the file is compared with what it would replace: a
+  file holding *fewer* notes than the page does is reported before anything is
+  written;
+* a page that already holds exactly that file is left alone, so re-running a
+  restore does not leave an empty revision in the page history;
+* reddit keeps the page's revision history, so a restore is undone the way any
+  other wiki edit is - run `usernotes backup` first if the notes as they stand
+  are worth keeping.
+
+A file backed up from one subreddit can be restored into another: it holds a
+page, not a name.
+
 ### Options
 
 | Option | Commands | What it does |
@@ -165,7 +223,11 @@ message, so a typo is caught before anything is written.
 | `--base-url URL` | all | The reddit origin to talk to; `https://old.reddit.com` works too. |
 | `--flag FLAG` | `add` | The flag to set, by name or key as `usernotes flags SUBREDDIT` lists it.  Defaults to the flag on the user's most recent flagged note; `none` sets no flag. |
 | `--link URL` | `add` | What the note is about: an absolute URL, or a path such as `/r/toolbox/comments/abc123/`. |
-| `--json` | all | Print one JSON document instead of the listing.  For `read` and `add`: `subreddit`, `page`, `schema`, `exists`, `name`, `aliases`, `notes[]` (`text`, `time`, `time_iso`, `mod`, `type`, `link`) and `warnings[]`.  For `flags`: `subreddit` and `flags[]` (`key`, `text`, `color`). |
+| `-o FILE`, `--output FILE` | `backup` | The file to write; the default is `usernotes_<subreddit>_<UTC timestamp>.json` in the current directory. |
+| `-d DIR`, `--directory DIR` | `backup` | Where to put that generated filename; created if it does not exist. |
+| `--force` | `restore` | Restore a file that does not decode as a usernotes page. |
+| `--dry-run` | `restore` | Say what would be written, and write nothing. |
+| `--json` | all | Print one JSON document instead of the listing.  For `read` and `add`: `subreddit`, `page`, `schema`, `exists`, `name`, `aliases`, `notes[]` (`text`, `time`, `time_iso`, `mod`, `type`, `link`) and `warnings[]`.  For `flags`: `subreddit` and `flags[]` (`key`, `text`, `color`).  For `backup`: `path`, `subreddit`, `taken_at`, `size`, `notes`, `users` and `warnings`.  For `restore`: `path`, `subreddit`, `schema`, `size`, `notes`, `users`, `replaced_notes`, `replaced_users`, `written`, `dry_run` and `warnings`. |
 | `--color WHEN` | all | `auto` (default: colour when stdout is a terminal), `always`, `never`. |
 | `--local` | `read`, `add` | Show note times in the local time zone instead of UTC. |
 | `-v` / `-q` | all | More or less logging on stderr: `-v` for what is happening, `-vv` for every request, `-q` for errors only. |
@@ -188,8 +250,8 @@ of the cookies it found.
 
 | Status | Meaning |
 |---|---|
-| `0` | A listing was printed - an empty one counts - or a note was written. |
-| `1` | Reddit refused, or the store could not be read or written (bad cookies, not a moderator, the page is not usernotes, a flag that does not exist, the page changed while the note was being added, ...). |
+| `0` | A listing was printed - an empty one counts - a note was written, or a file was backed up or restored. |
+| `1` | Reddit refused, or a store or file could not be read or written (bad cookies, not a moderator, the page is not usernotes, a flag that does not exist, the page changed while the note was being added, a file that is not a usernotes page, ...). |
 | `2` | A usage error, reported by the argument parser before anything is sent. |
 
 ## Development
