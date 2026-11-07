@@ -102,26 +102,27 @@ A Chromium-family browser on Linux encrypts what it stores with a key held in
 the desktop keyring, and which keyring that is has to be guessed from the
 desktop environment - so on a desktop it does not recognise, the guess can be
 wrong and the reddit session cookie goes missing, leaving every request
-anonymous.  The tool says so before it makes one, and naming the keyring settles
-it: `usernotes --cookies-from-browser chromium+gnomekeyring ...`.  A store with
-no keyring-encrypted cookies in it is read without any keyring access at all,
-and a keyring that cannot be read costs only those cookies, not the store.
+anonymous.  The tool says so before it makes a guess, and naming the keyring
+settles it: `usernotes --cookies-from-browser chromium+gnomekeyring ...`.  A
+store with no keyring-encrypted cookies in it is read without any keyring
+access at all, and a keyring that cannot be read costs only those cookies, not
+the store.
 
 **Browsers.**  `--cookies-from-browser` takes
 `BROWSER[+KEYRING][:PROFILE][::CONTAINER]`, and knows these browsers (`all`
 means Windows, macOS and Linux):
 
-| Browser    | Operating systems |
-|------------|-------------------|
-| `brave`    | all               |
-| `chrome`   | all               |
-| `chromium` | all               |
-| `edge`     | all               |
-| `firefox`  | all               |
-| `opera`    | all               |
-| `safari`   | macOS             |
-| `vivaldi`  | all               |
-| `whale`    | all               |
+| Browser    | Browser family | Operating systems |
+|------------|----------------|-------------------|
+| `firefox`  | firefox        | all               |
+| `brave`    | chromium       | all               |
+| `chrome`   | chromium       | all               |
+| `chromium` | chromium       | all               |
+| `edge`     | chromium       | all               |
+| `opera`    | chromium       | all               |
+| `vivaldi`  | chromium       | all               |
+| `whale`    | chromium       | all               |
+| `safari`   | chromium       | macOS only        |
 
 Firefox stores its cookie values in the clear, which makes it the most reliable
 source.  Safari is macOS only.  On Windows the values can only be decrypted as
@@ -133,7 +134,7 @@ key it encrypts its cookie values with.  The chromium family is the whole of it
 - `brave`, `chrome`, `chromium`, `edge`, `opera`, `vivaldi` and `whale` - since
 Firefox needs no keyring and Safari is not on Linux:
 
-| Keyring        | Operating system | Browsers        | What it is                                     |
+| Keyring        | Operating system | Browsers        | Description                                    |
 |----------------|------------------|-----------------|------------------------------------------------|
 | `basictext`    | Linux            | chromium family | Chromium's built-in key, so no keyring         |
 | `gnomekeyring` | Linux            | chromium family | the freedesktop secret service (GNOME keyring) |
@@ -154,9 +155,9 @@ it to keep the shell out of it:
 
 ```sh
 usernotes --cookies-from-browser "chromium:Profile 1" read toolbox alice
-usernotes --cookies-from-browser firefox:abc123.default-release read toolbox alice
-usernotes --cookies-from-browser "chromium:~/.config/chromium/Default" read toolbox alice
 usernotes --cookies-from-browser "chromium+gnomekeyring:Profile 1" read toolbox alice
+usernotes --cookies-from-browser "chromium:~/.config/chromium/Default" read toolbox alice
+usernotes --cookies-from-browser firefox:abc123.default-release read toolbox alice
 ```
 
 `opera` has no profiles, so a `:PROFILE` for it is not used, and Safari's
@@ -196,7 +197,7 @@ for the wiki API, so they are safe to run anywhere.
 
 The code is a library with a thin front end over it:
 
-| Module                 | What it is                                                                |
+| Module                 | Description                                                               |
 |------------------------|---------------------------------------------------------------------------|
 | `usernotes/cli.py`     | The command line tool: arguments, cookies, exit statuses.                 |
 | `usernotes/display.py` | Turning notes into terminal text, in toolbox's colours.                   |
