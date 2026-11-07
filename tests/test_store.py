@@ -15,6 +15,7 @@ from tests.fake_reddit import FakeReddit
 from usernotes import format as fmt
 from usernotes.api import RedditWikiClient
 from usernotes.errors import (
+    FormatError,
     InvalidPageError,
     NoWikiPageError,
     NoteNotFoundError,
@@ -24,7 +25,7 @@ from usernotes.errors import (
     UnsupportedSchemaError,
     UserNotFoundError,
 )
-from usernotes.store import Backup, UsernotesStore, normalize_subreddit
+from usernotes.store import Backup, Restore, UsernotesStore, normalize_subreddit
 
 MOD = 'moduser'
 MODHASH = 'modhash-abc'
@@ -607,6 +608,167 @@ class BackupTests(StoreTestCase):
         self.store.backup(directory=self.directory)
         self.assertFalse(self.store.dirty)
         self.assertEqual(self.reddit.requests_to('/r/test/api/wiki/edit'), [])
+
+
+class RestoreTests(StoreTestCase):
+    """Putting a backup back - the one thing here that can take notes away."""
+
+    def setUp(self):
+        super().setUp()
+        self.directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
+        self.backup = os.path.join(self.directory, 'notes.json')
+        self.store.backup(self.backup)
+        self.original = self.reddit.page('test')
+
+    def write(self, content, mode='w'):
+        """A file in the test's directory, and its path."""
+        path = os.path.join(self.directory, 'given.json')
+        with open(path, mode) as handle:
+            handle.write(content)
+        return path
+
+    def wreck(self, users=None):
+        """Replace the live page, as a bad edit or a busy week would."""
+        users = {'alice': {'ns': []}} if users is None else users
+        text = json.dumps({'ver': 6, 'constants': {},
+                           'blob': fmt.compress_blob(users)})
+        self.reddit.pages[('test', 'usernotes')] = text
+        return text
+
+    def edits(self, subreddit='test'):
+        return self.reddit.requests_to(f'/r/{subreddit}/api/wiki/edit', method='POST')
+
+    def test_puts_the_file_back_verbatim(self):
+        wrecked = self.wreck()
+        result = self.store.restore(self.backup)
+        self.assertIsInstance(result, Restore)
+        self.assertTrue(result.written)
+        self.assertFalse(result.dry_run)
+        self.assertEqual(self.reddit.page('test'), self.original)
+        self.assertNotEqual(self.reddit.page('test'), wrecked)
+        self.assertEqual((result.ver, result.notes, result.users), (6, 1, 1))
+        self.assertEqual((result.replaced_notes, result.replaced_users), (0, 1))
+        self.assertTrue(result.summary().startswith(f'{self.backup}: restored'))
+        self.assertIn('1 notes for 1 users', result.summary())
+
+    def test_the_revision_says_where_it_came_from(self):
+        self.wreck()
+        self.store.restore(self.backup)
+        reason = self.edits()[-1].form['reason']
+        self.assertIn('restore usernotes for /r/test from notes.json', reason)
+        self.assertIn('usernotes-cli', reason)
+
+    def test_a_page_that_already_holds_the_file_is_left_alone(self):
+        # Nothing has changed since the backup, so there is nothing to write
+        # and no empty revision to leave in the page history.
+        result = self.store.restore(self.backup)
+        self.assertFalse(result.written)
+        self.assertEqual(self.edits(), [])
+        self.assertIn('the page already holds it', result.summary())
+
+    def test_a_dry_run_writes_nothing(self):
+        wrecked = self.wreck()
+        result = self.store.restore(self.backup, dry_run=True)
+        self.assertFalse(result.written)
+        self.assertTrue(result.dry_run)
+        self.assertEqual(self.reddit.page('test'), wrecked)
+        self.assertEqual(self.edits(), [])
+        self.assertIn('dry run', result.summary())
+
+    def test_a_file_that_is_not_a_usernotes_page_is_refused(self):
+        path = self.write('this is not a wiki page')
+        with self.assertRaises(FormatError):
+            self.store.restore(path)
+        self.assertEqual(self.reddit.page('test'), self.original)
+        self.assertEqual(self.edits(), [])
+
+    def test_force_restores_one_anyway(self):
+        # Putting back a backup of a page that was already damaged.
+        path = self.write('this is not a wiki page')
+        result = self.store.restore(path, force=True)
+        self.assertTrue(result.written)
+        self.assertIsNone(result.notes)
+        self.assertTrue(result.warnings)
+        self.assertEqual(self.reddit.page('test'), 'this is not a wiki page')
+        self.assertIn('could not be decoded', result.summary())
+
+    def test_an_empty_file_is_refused_even_with_force(self):
+        for content in ('', '   \n'):
+            path = self.write(content)
+            with self.subTest(content=content):
+                with self.assertRaises(FormatError):
+                    self.store.restore(path, force=True)
+        self.assertEqual(self.edits(), [])
+
+    def test_a_file_that_is_not_utf8_is_refused(self):
+        path = self.write(b'\xff\xfe\x00\x01', mode='wb')
+        with self.assertRaises(FormatError):
+            self.store.restore(path)
+        self.assertEqual(self.edits(), [])
+
+    def test_a_restore_creates_a_page_that_is_not_there(self):
+        reddit = FakeReddit(cookie='reddit_session=abc')
+        reddit.start()
+        self.addCleanup(reddit.stop)
+        store = UsernotesStore('fresh', cookies='reddit_session=abc',
+                               base_url=reddit.base_url, min_interval=0, retry_backoff=0)
+        result = store.restore(self.backup)
+        self.assertTrue(result.written)
+        self.assertIsNone(result.replaced_notes)
+        self.assertEqual(reddit.page('fresh'), self.original)
+        # Left listed and moderators-only, as a save leaves it.
+        self.assertEqual(reddit.permlevel, 2)
+        self.assertTrue(reddit.listed)
+
+    def test_a_restore_that_takes_notes_away_says_so(self):
+        class RecordingLogger:
+            def __init__(self):
+                self.messages = []
+
+            def _record(self, message, *args):
+                self.messages.append(message)
+
+            debug = info = warning = error = _record
+
+        # Two notes on the page, one in the file.
+        self.wreck({'alice': {'ns': [{'t': 1, 'n': 'a', 'm': None, 'w': None, 'l': ''}]},
+                    'bob': {'ns': [{'t': 2, 'n': 'b', 'm': None, 'w': None, 'l': ''}]}})
+        logger = RecordingLogger()
+        result = self.make_store(logger=logger).restore(self.backup)
+        self.assertEqual(result.replaced_notes, 2)
+        self.assertTrue(any('takes 1 of them away' in message
+                            for message in logger.messages), logger.messages)
+
+    def test_the_store_holds_the_restored_notes_afterwards(self):
+        self.wreck()
+        self.store.restore(self.backup)
+        self.assertEqual(self.store.note_count(), 1)
+        self.assertEqual(self.store.notes('alice')[0].text, 'first note')
+        self.assertTrue(self.store.loaded)
+
+    def test_a_restore_does_not_upgrade_an_older_schema(self):
+        # `save` writes v6; a restore writes back whatever was backed up, so a
+        # page kept at v5 stays at v5.
+        old = fmt.build_page({'alice': (fmt.Note(text='old note', time=1559310750000),)},
+                             ver=5)
+        path = self.write(old)
+        result = self.store.restore(path)
+        self.assertEqual(result.ver, 5)
+        self.assertEqual(self.reddit.page('test'), old)
+        self.assertEqual(self.store.ver, 5)
+
+    def test_the_results_describe_themselves(self):
+        backup = self.store.backup(self.backup)
+        self.assertEqual(backup.as_dict()['taken_at'], backup.taken_at.isoformat())
+        self.assertEqual(backup.as_dict()['notes'], 1)
+        restore = self.store.restore(self.backup, dry_run=True)
+        document = restore.as_dict()
+        self.assertEqual(document['schema'], 6)
+        self.assertEqual((document['notes'], document['users']), (1, 1))
+        self.assertFalse(document['written'])
+        self.assertTrue(document['dry_run'])
+        self.assertEqual(document['warnings'], [])
 
 
 class RecordingOpener:

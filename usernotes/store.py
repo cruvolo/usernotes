@@ -49,6 +49,20 @@ is losing a moderator's work:
 
 The save reason follows toolbox's wording (``create new note on user alice``)
 with this tool's name appended, so a page's revision history stays readable.
+
+Backups, and putting them back
+------------------------------
+
+`backup` writes the page's text to a file exactly as Reddit returned it, and
+`restore` writes such a file back as a new revision - also exactly, never
+through this tool's own writer.  So a page that this tool cannot decode is
+still backed up, and still restorable, as it is; re-encoding either way would
+be the one way to lose something.
+
+Restoring is the one operation here that can take notes away, because it
+replaces the page rather than editing it, so it checks what it is about to
+replace first - see `restore`.  Reddit keeps every revision, so a restore can
+be undone from the page history like any other edit.
 """
 
 from __future__ import annotations
@@ -86,6 +100,7 @@ from .model import Notes, UserNotes, normalize_username
 
 __all__ = [
     'Backup',
+    'Restore',
     'UsernotesStore',
     'normalize_subreddit',
 ]
@@ -138,6 +153,82 @@ class Backup:
                     f'that could not be decoded')
         return (f'{self.path}: {self.notes} notes for {self.users} users '
                 f'({self.size} bytes)')
+
+    def as_dict(self):
+        """A JSON-friendly view of the backup, for a CLI's ``--json``."""
+        return {
+            'path': self.path,
+            'subreddit': self.subreddit,
+            'taken_at': self.taken_at.isoformat(),
+            'size': self.size,
+            'notes': self.notes,
+            'users': self.users,
+            'warnings': list(self.warnings),
+        }
+
+
+@dataclasses.dataclass(frozen=True)
+class Restore:
+    """What `UsernotesStore.restore` wrote, or would have written.
+
+    :param path: the file that was restored.
+    :param subreddit: the subreddit whose notes it was written to.  Not
+        necessarily the one the backup was taken from: the file holds a page,
+        not a name, so a backup can be put into another subreddit.
+    :param size: how many bytes the file holds.
+    :param ver: the schema version the file decoded as, or ``None`` when it
+        could not be decoded - a restore that was forced.
+    :param notes: how many notes the file decoded to, or ``None``.
+    :param users: how many users the file decoded to, or ``None``.
+    :param replaced_notes: how many notes the page held before the restore, or
+        ``None`` when there was no page, or it could not be decoded either.
+    :param replaced_users: as *replaced_notes*, for users.
+    :param warnings: anything odd found while decoding the file, empty for a
+        clean one.
+    :param written: whether the page was written.  False for a dry run, and
+        for a page that already held the file.
+    :param dry_run: whether this was a dry run, which is what tells the two
+        ways of not writing apart.
+    """
+
+    path: str
+    subreddit: str
+    size: int
+    ver: int | None = None
+    notes: int | None = None
+    users: int | None = None
+    replaced_notes: int | None = None
+    replaced_users: int | None = None
+    warnings: tuple[str, ...] = ()
+    written: bool = False
+    dry_run: bool = False
+
+    def summary(self):
+        """One line describing the restore, for a CLI to print."""
+        if self.notes is None:
+            counts = f'{self.size} bytes that could not be decoded'
+        else:
+            counts = f'{self.notes} notes for {self.users} users ({self.size} bytes)'
+        if self.written:
+            return f'{self.path}: restored {counts} to /r/{self.subreddit}'
+        why = 'dry run' if self.dry_run else 'the page already holds it'
+        return f'{self.path}: {counts} not written to /r/{self.subreddit} ({why})'
+
+    def as_dict(self):
+        """A JSON-friendly view of the restore, for a CLI's ``--json``."""
+        return {
+            'path': self.path,
+            'subreddit': self.subreddit,
+            'schema': self.ver,
+            'size': self.size,
+            'notes': self.notes,
+            'users': self.users,
+            'replaced_notes': self.replaced_notes,
+            'replaced_users': self.replaced_users,
+            'written': self.written,
+            'dry_run': self.dry_run,
+            'warnings': list(self.warnings),
+        }
 
 
 def normalize_subreddit(value):
@@ -618,7 +709,134 @@ class UsernotesStore:
         return Backup(path=path, subreddit=self.subreddit, taken_at=taken_at,
                       size=size, notes=notes, users=users, warnings=warnings)
 
+    def restore(self, path, *, force=False, reason=None, dry_run=False,
+                update_settings=True):
+        """Write a backup file back to the wiki, as a new revision.
+
+        This is `backup` in reverse, and the one thing here that can *lose*
+        notes: whatever the page holds now is replaced by what the file holds.
+        The file's text goes to the wiki byte for byte, never through this
+        tool's own writer, so what comes back is what was backed up - including
+        the parts of it this tool cannot read (see *force*).
+
+        Four things are done first, because the alternative is a moderator
+        noticing afterwards that a month of notes is gone:
+
+        * the file has to be there, be UTF-8 text, and not be empty;
+        * it has to decode as a usernotes page unless *force* says otherwise -
+          writing something that is not a store over a store would take the
+          notes with it;
+        * the page is read, so that what is about to be replaced is known, and
+          a file holding *fewer* notes than the page does is reported as a
+          warning before anything is written;
+        * a page that already holds exactly this file is not written at all, so
+          re-running a restore does not leave an empty revision behind.
+
+        Reddit keeps the page's revision history, so a restore is undone the
+        same way any other wiki edit is; `backup` first if the notes as they
+        stand are worth keeping.
+
+        :param path: the file to restore, as `backup` wrote it.
+        :param force: write a file that does not decode as a usernotes page,
+            for putting back a backup of a page that was already damaged.  The
+            notes in it will not be readable afterwards either, until whatever
+            damaged them is undone.
+        :param reason: revision note for the page history.  Defaults to the
+            file's name, with this tool's name appended, as `save` does.
+        :param dry_run: do everything except the write, so that a moderator can
+            see what a restore would do first.
+        :param update_settings: re-apply the page's "listed, moderators only"
+            settings afterwards, as `save` does.
+        :returns: a `Restore` describing what was, or would have been, written.
+        :raises OSError: if the file cannot be read.
+        :raises usernotes.errors.FormatError: if the file is not UTF-8 text, is
+            empty, or does not decode and *force* was not given.
+        :raises usernotes.errors.PageFullError: if Reddit refuses the page as
+            too large.
+        """
+        path = os.fspath(path)
+        content = _read_backup(path)
+        size = len(content.encode('utf-8'))
+
+        page = None
+        warnings = ()
+        try:
+            page = parse_page(content, self.subreddit, base_url=self.client.base_url)
+        except FormatError as err:
+            if not force:
+                raise FormatError(
+                    f'{path} is not a usernotes page ({err}); refusing to write it '
+                    f'over /r/{self.subreddit}/wiki/{self.page} - pass force=True '
+                    'to restore it anyway') from err
+            warnings = (f'the file could not be decoded: {err}',)
+            self.log.warning(f'restoring {path}, which could not be decoded ({err})')
+
+        notes = users = ver = None
+        if page is not None:
+            notes, users, ver = page.note_count(), len(page.users), page.ver
+            warnings = page.warnings
+            self._log_warnings(warnings)
+
+        current = self.client.read_page(self.subreddit, self.page, missing_ok=True)
+        replaced_notes = replaced_users = None
+        if current is not None:
+            try:
+                replaced = parse_page(current, self.subreddit,
+                                      base_url=self.client.base_url)
+            except FormatError:
+                pass        # a page that cannot be decoded counts as unknown
+            else:
+                replaced_notes = replaced.note_count()
+                replaced_users = len(replaced.users)
+
+        if _comparable(current) == _comparable(content):
+            self.log.info(f'/r/{self.subreddit}/wiki/{self.page} already holds '
+                          f'{path}; nothing to write')
+            written = False
+        elif dry_run:
+            self.log.info(f'{path} would be written to '
+                          f'/r/{self.subreddit}/wiki/{self.page}')
+            written = False
+        else:
+            if notes is not None and replaced_notes is not None and notes < replaced_notes:
+                self.log.warning(
+                    f'{path} holds {notes} note(s) and /r/{self.subreddit}/wiki/'
+                    f'{self.page} holds {replaced_notes}: restoring takes '
+                    f'{replaced_notes - notes} of them away')
+            self.client.write_page(
+                self.subreddit, self.page, content,
+                reason=_with_provenance(self._restore_reason(reason, path)))
+            if update_settings:
+                try:
+                    self.client.set_page_settings(self.subreddit, self.page)
+                except ApiError as err:
+                    self.log.warning(
+                        f'the usernotes were restored, but re-applying the page '
+                        f'settings failed ({err}); check that /r/{self.subreddit}/'
+                        f'wiki/{self.page} is still listed and moderators-only')
+            written = True
+
+        if written:
+            # The store holds what the wiki holds now, as it does after `save`.
+            self._raw = content
+            self._exists = True
+            self._changes = []
+            self._warnings = warnings
+            self._loaded = True
+            self._users = Notes(page.users) if page is not None else Notes()
+            self._ver = ver if ver is not None else NOTES_SCHEMA
+        return Restore(path=path, subreddit=self.subreddit, size=size, ver=ver,
+                       notes=notes, users=users, replaced_notes=replaced_notes,
+                       replaced_users=replaced_users, warnings=warnings,
+                       written=written, dry_run=dry_run)
+
     # -- internals ----------------------------------------------------------
+
+    def _restore_reason(self, reason, path):
+        if reason:
+            return reason
+        return (f'restore usernotes for /r/{self.subreddit} '
+                f'from {os.path.basename(path)}')
 
     def _check_stale(self):
         current = self.client.read_page(self.subreddit, self.page, missing_ok=True)
@@ -729,6 +947,27 @@ def _with_provenance(reason):
     """Mark the revision as this tool's, the way toolbox marks its own."""
     reason = f'{reason} via usernotes-cli'
     return reason if len(reason) <= _MAX_REASON else reason[:_MAX_REASON - 3] + '...'
+
+
+def _read_backup(path):
+    """The text of a backup file, for `UsernotesStore.restore`.
+
+    Read as bytes and decoded here rather than with ``open(path)`` so that a
+    file which is not UTF-8 text fails as a format problem - the caller has
+    asked for the file to be written to a wiki page, and a page is text - and
+    not as a UnicodeDecodeError from somewhere deeper.
+
+    :raises OSError: if the file cannot be read.
+    :raises usernotes.errors.FormatError: if it is empty, or not UTF-8.
+    """
+    with open(path, 'rb') as handle:
+        data = handle.read()
+    if not data.strip():
+        raise FormatError(f'{path} is empty; there is nothing to restore')
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError as err:
+        raise FormatError(f'{path} is not UTF-8 text ({err})') from err
 
 
 def _write_atomic(path, text):
