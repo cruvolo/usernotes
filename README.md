@@ -20,14 +20,14 @@ The whole set is implemented: `usernotes read`, `add`, `flags`, `search`,
 * On Linux, `secretstorage` is installed with the package: it is what reads a
   Chromium cookie store's key out of the desktop keyring over D-Bus, and
   without it those cookies cannot be decrypted.  It comes with `cryptography`
-  and `jeepney` of its own.  On debian-based systems install the
+  and `jeepney` of its own.  On Debian-based systems install the
   `python3-secretstorage` package.
 * A reddit account that moderates the subreddit, unless its usernotes page has
   been left publicly readable.
 
 ## Build and install
 
-On debian-based linux systems, install the secretstorage dependency:
+On Debian-based Linux systems, install the secretstorage dependency:
 
 ```sh
 sudo apt install python3-secretstorage
@@ -132,7 +132,7 @@ The code is a library with a thin front end over it:
 | `usernotes/format.py` | The on-wiki storage format (page JSON, its zlib/base64 blob, note types). |
 | `usernotes/model.py` | The in-memory notes collection (usernames, ordering). |
 | `usernotes/api.py` | Reddit's wiki API over `urllib`, with a caller-supplied cookie. |
-| `usernotes/cookies.py` | Getting those cookies out of a browser (vendored from yt-dlp). |
+| `usernotes/cookies.py` | Getting those cookies out of a browser (borrowed from yt-dlp). |
 | `usernotes/errors.py` | Every exception the package raises. |
 
 ## License
