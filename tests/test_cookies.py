@@ -10,6 +10,7 @@ Run from the repository root::
     python3 -m unittest discover -v
 """
 
+import contextlib
 import hashlib
 import http.cookiejar
 import io
@@ -20,9 +21,11 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 from usernotes import cookies
 from usernotes._vendor import aes as vendored_aes
+from usernotes._vendor import browser_cookies as vendored_cookies
 
 REDDIT_URL = 'https://www.reddit.com'
 
@@ -31,6 +34,12 @@ REDDIT_URL = 'https://www.reddit.com'
 # test can produce real ones without a keyring.
 CHROME_V10_KEY = hashlib.pbkdf2_hmac('sha1', b'peanuts', b'saltysalt', 1, 16)
 CHROME_V10_IV = b' ' * 16
+
+# The secret the browser keeps in the desktop keyring for its ``v11`` cookies.
+# A stand-in: no test reads a real keyring, and none of these values leaves the
+# temporary profile it was written for.
+CHROME_KEYRING_SECRET = b'c2VjcmV0LWZyb20tdGhlLWtleXJpbmc='
+CHROME_V11_IV = b' ' * 16
 
 
 def pkcs7_pad(data):
@@ -46,6 +55,44 @@ def chrome_encrypt(value, *, hash_prefix=False):
         plaintext = hashlib.sha256(b'reddit_session').digest() + plaintext
     return b'v10' + vendored_aes.aes_cbc_encrypt_bytes(
         pkcs7_pad(plaintext), CHROME_V10_KEY, CHROME_V10_IV)
+
+
+def chrome_v11_encrypt(value, secret=CHROME_KEYRING_SECRET):
+    """Encrypt *value* the way Chromium does when the desktop keyring has a key.
+
+    The key is derived from the secret the browser stores in the keyring, which
+    is why a store like this cannot be read without asking the keyring for it.
+    """
+    key = hashlib.pbkdf2_hmac('sha1', secret, b'saltysalt', 1, 16)
+    return b'v11' + vendored_aes.aes_cbc_encrypt_bytes(
+        pkcs7_pad(value.encode()), key, CHROME_V11_IV)
+
+
+@contextlib.contextmanager
+def report_from_mate():
+    """The desktop the bug report came from: MATE, started by lightdm.
+
+    ``XDG_CURRENT_DESKTOP=MATE`` is a name chromium's own detection does not
+    know, and ``DESKTOP_SESSION=lightdm-xsession`` is not ``mate``, so the
+    desktop is *other* - which the vendored code reads as basic-text, no key.
+    """
+    with unittest.mock.patch.dict(os.environ, {
+            'XDG_CURRENT_DESKTOP': 'MATE',
+            'DESKTOP_SESSION': 'lightdm-xsession',
+    }, clear=True):
+        yield
+
+
+@contextlib.contextmanager
+def secret_service_stub(secret=CHROME_KEYRING_SECRET):
+    """Stand in for reading the browser's key out of the freedesktop keyring.
+
+    Yields the mock, so a test can assert whether the key was asked for at all.
+    """
+    with unittest.mock.patch.object(
+            vendored_cookies, '_get_gnome_keyring_password',
+            return_value=secret) as lookup:
+        yield lookup
 
 
 def write_chrome_profile(root, rows, meta_version=23):
@@ -357,6 +404,74 @@ class ChromiumCookieTest(TempDirTestCase):
         self.assertEqual(before, after)
         # The live database is opened through a temporary copy, which is removed
         self.assertEqual(sorted(os.listdir(profile)), ['Cookies'])
+
+
+class ChromiumKeyringTest(TempDirTestCase):
+    """The v11 cookies, whose key comes from the desktop keyring.
+
+    No test here touches a real keyring: the secret service lookup is stubbed
+    out, and the environment is the one from the bug report - MATE started from
+    lightdm, which is a desktop neither chromium nor the vendored detection has
+    a name for, so the keyring is guessed to be basic-text and the guessed
+    answer has to be questioned when a v11 cookie turns up.
+    """
+
+    def load(self, profile, keyring=None, logger=cookies.NULL_LOGGER, secret=CHROME_KEYRING_SECRET):
+        spec = cookies.BrowserSpec('chromium', profile=profile, keyring=keyring)
+        with report_from_mate(), secret_service_stub(secret) as lookup:
+            self.lookup = lookup
+            return cookies.load_cookie_jar(from_browser=spec, logger=logger)
+
+    def test_v11_cookie_is_decrypted_from_the_secret_service(self):
+        profile = self.path('chromium-profile')
+        write_chrome_profile(profile, [
+            ('.reddit.com', 'reddit_session', '', chrome_v11_encrypt('s3cret'), '/', 0, 1),
+        ])
+        jar = self.load(profile)
+        self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
+        self.lookup.assert_called_once()
+
+    def test_v11_cookie_is_skipped_when_the_secret_service_has_nothing(self):
+        profile = self.path('chromium-profile')
+        write_chrome_profile(profile, [
+            ('.reddit.com', 'reddit_session', '', chrome_v11_encrypt('s3cret'), '/', 0, 1),
+            ('.reddit.com', 'token_v2', '', chrome_encrypt('tok'), '/', 0, 1),
+        ])
+        stream = io.StringIO()
+        jar = self.load(profile, secret=b'', logger=cookies.Logger(stream=stream))
+        # v10 still works: only the v11 cookie is given up on, once.
+        self.assertEqual(cookie_map(jar).keys(), {'token_v2'})
+        self.assertIn('cannot decrypt v11 cookies', stream.getvalue())
+
+    def test_a_store_without_v11_cookies_never_asks_for_a_key(self):
+        profile = self.path('chromium-profile')
+        write_chrome_profile(profile, [
+            ('.reddit.com', 'reddit_session', '', chrome_encrypt('s3cret'), '/', 0, 1),
+        ])
+        # The keyring is only consulted for a cookie that needs it, so a
+        # basic-text store cannot pop up a keyring prompt or need secretstorage.
+        self.assertEqual(self.load(profile).get_cookie_header(REDDIT_URL),
+                         'reddit_session=s3cret')
+        self.lookup.assert_not_called()
+
+    def test_an_explicit_keyring_is_not_second_guessed(self):
+        profile = self.path('chromium-profile')
+        write_chrome_profile(profile, [
+            ('.reddit.com', 'reddit_session', '', chrome_v11_encrypt('s3cret'), '/', 0, 1),
+        ])
+        jar = self.load(profile, keyring='basictext')
+        self.assertEqual(cookie_map(jar), {})
+        self.lookup.assert_not_called()
+
+    def test_naming_the_keyring_reads_it(self):
+        # `chromium+gnomekeyring`: the workaround for this case, and what the
+        # command line tells a user to pass when it cannot work it out.
+        profile = self.path('chromium-profile')
+        write_chrome_profile(profile, [
+            ('.reddit.com', 'reddit_session', '', chrome_v11_encrypt('s3cret'), '/', 0, 1),
+        ])
+        jar = self.load(profile, keyring='gnomekeyring')
+        self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
 
 
 class FirefoxCookieTest(TempDirTestCase):

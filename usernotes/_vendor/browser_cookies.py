@@ -458,6 +458,21 @@ class LinuxChromeCookieDecryptor(ChromeCookieDecryptor):
     @functools.cached_property
     def _v11_key(self):
         password = _get_linux_keyring_password(self._browser_keyring_name, self._keyring, self._logger)
+        if password is None and self._keyring is None:
+            # usernotes: `_get_linux_keyring_password` answered None because no
+            # keyring was given and the one guessed from the desktop
+            # environment was basic-text, which means "no keyring, so no v11
+            # cookies".  A v11 cookie is proof that the browser did have a
+            # keyring key, so that guess was wrong - and it is wrong for every
+            # desktop `_get_linux_desktop_environment` cannot name (MATE, whose
+            # XDG_CURRENT_DESKTOP is "MATE", is one), because current chromium
+            # reads its key from the freedesktop secret service on every
+            # desktop that is not KDE - see
+            # https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/os_crypt/async/browser/freedesktop_secret_key_provider.cc
+            # So ask the secret service before giving up.  An explicit
+            # `+keyring` is not second-guessed: that is an instruction, not a
+            # guess, and the user can name gnomekeyring themselves.
+            password = _get_gnome_keyring_password(self._browser_keyring_name, self._logger) or None
         return None if password is None else self.derive_key(password)
 
     @staticmethod

@@ -131,6 +131,42 @@ Cookie attribute mapping worth preserving:
 * Supported keyring names are the members of `_LinuxKeyring` (`:760-772`).
 * Windows requires running as the same user account as the browser (DPAPI).
 
+### The keyring guess, and the one place `usernotes` departs from yt-dlp
+
+Which keyring a Chromium store was encrypted with cannot be read out of the
+store: it has to be guessed, and gotten right, or the `v11` cookies - the ones
+the browser encrypted with a key it keeps in the keyring - are dropped.
+
+* Chromium picks its key store from `--password-store`, or from the desktop
+  environment when that is not given. The current implementation is
+  `FreedesktopSecretKeyProvider::GetKey()`
+  (`components/os_crypt/async/browser/freedesktop_secret_key_provider.cc`):
+  KDE 3/4/5/6 use KWallet, **every other desktop - including one it cannot
+  name - uses the freedesktop secret service**, the libsecret D-Bus API that
+  gnome-keyring answers. The key is a random secret stored under the label
+  `<BROWSER> Safe Storage`, and the AES key is PBKDF2-SHA1 over that secret.
+* yt-dlp's `_get_linux_desktop_environment` (`:775`) mirrors the *older*
+  Chromium, which read an unrecognised desktop as basic-text, and
+  `_choose_linux_keyring` follows it: `OTHER` (and KDE3, LXQt) means
+  `BASICTEXT`, i.e. "no keyring, so no `v11` keys". That is why plain
+  `--cookies-from-browser chromium` drops `v11` cookies on desktops neither
+  routine knows - MATE, whose `XDG_CURRENT_DESKTOP` is `MATE` and whose
+  `DESKTOP_SESSION` from lightdm is `lightdm-xsession`, is one. yt-dlp's answer
+  is to name the keyring (`chromium+gnomekeyring`); see
+  [yt-dlp#12885](https://github.com/yt-dlp/yt-dlp/issues/12885).
+* `usernotes` keeps the guess, but questions it: when it answered basic-text
+  and a `v11` cookie turns up (`LinuxChromeCookieDecryptor._v11_key`), that is
+  proof a keyring was used after all, so the freedesktop secret service is
+  asked before the cookie is given up on. The lookup happens at most once per
+  extraction, and only when a `v11` cookie needs it - a store that has none,
+  which is what a basic-text browser writes, never touches the keyring at all.
+  An explicit `+keyring` is obeyed rather than second-guessed.
+* Reading the secret service needs the optional `secretstorage` package
+  (`pip install 'usernotes[gnome-keyring]'`). Without it a `v11` cookie is
+  reported as undecryptable, with the reason, and `--cookies FILE` still works.
+* This is the only change to the vendored code's behaviour; it is marked with a
+  `# usernotes:` comment, like every other edit in that file.
+
 ### Safari (`_extract_safari_cookies`, `yt_dlp/cookies.py:568`)
 
 * macOS in practice. The platform guard also accepts `sys.platform == 'ios'`, but
