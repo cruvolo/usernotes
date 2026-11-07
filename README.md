@@ -57,15 +57,15 @@ python3 -m usernotes --version
 usernotes [-v|-q] [connection options] COMMAND [options] ...
 ```
 
-| Command | What it does |
-|---|---|
-| `usernotes read SUBREDDIT USERNAME` | Print a user's notes. |
-| `usernotes add SUBREDDIT USERNAME TEXT` | Add a note, then print their notes again. |
-| `usernotes flags SUBREDDIT` | List the flags a note can carry. |
-| `usernotes search SUBREDDIT PATTERN` | Find notes by user, text, flag or time. |
-| `usernotes remove SUBREDDIT USERNAME` | Delete one of a user's notes. |
-| `usernotes backup SUBREDDIT` | Save the whole usernotes page to a file. |
-| `usernotes restore SUBREDDIT FILE` | Put such a file back as a new wiki revision. |
+| Command                                 | What it does                                 |
+|-----------------------------------------|----------------------------------------------|
+| `usernotes read SUBREDDIT USERNAME`     | Print a user's notes.                        |
+| `usernotes add SUBREDDIT USERNAME TEXT` | Add a note, then print their notes again.    |
+| `usernotes flags SUBREDDIT`             | List the flags a note can carry.             |
+| `usernotes search SUBREDDIT PATTERN`    | Find notes by user, text, flag or time.      |
+| `usernotes remove SUBREDDIT USERNAME`   | Delete one of a user's notes.                |
+| `usernotes backup SUBREDDIT`            | Save the whole usernotes page to a file.     |
+| `usernotes restore SUBREDDIT FILE`      | Put such a file back as a new wiki revision. |
 
 Names are matched ignoring case and the `u/` prefix, and so are subreddit names
 (`toolbox` and `/r/toolbox` are the same).  Every command reads or writes the
@@ -127,16 +127,16 @@ for the wiki API, so they are safe to run anywhere.
 
 The code is a library with a thin front end over it:
 
-| Module | What it is |
-|---|---|
-| `usernotes/cli.py` | The command line tool: arguments, cookies, exit statuses. |
-| `usernotes/display.py` | Turning notes into terminal text, in toolbox's colours. |
-| `usernotes/store.py` | `UsernotesStore`: load a subreddit's notes, edit them, save, back up. |
-| `usernotes/format.py` | The on-wiki storage format (page JSON, its zlib/base64 blob, note types). |
-| `usernotes/model.py` | The in-memory notes collection (usernames, ordering). |
-| `usernotes/api.py` | Reddit's wiki API over `urllib`, with a caller-supplied cookie. |
-| `usernotes/cookies.py` | Getting those cookies out of a browser (borrowed from yt-dlp). |
-| `usernotes/errors.py` | Every exception the package raises. |
+| Module                 | What it is                                                                |
+|------------------------|---------------------------------------------------------------------------|
+| `usernotes/cli.py`     | The command line tool: arguments, cookies, exit statuses.                 |
+| `usernotes/display.py` | Turning notes into terminal text, in toolbox's colours.                   |
+| `usernotes/store.py`   | `UsernotesStore`: load a subreddit's notes, edit them, save, back up.     |
+| `usernotes/format.py`  | The on-wiki storage format (page JSON, its zlib/base64 blob, note types). |
+| `usernotes/model.py`   | The in-memory notes collection (usernames, ordering).                     |
+| `usernotes/api.py`     | Reddit's wiki API over `urllib`, with a caller-supplied cookie.           |
+| `usernotes/cookies.py` | Getting those cookies out of a browser (borrowed from yt-dlp).            |
+| `usernotes/errors.py`  | Every exception the package raises.                                       |
 
 ## License
 

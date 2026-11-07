@@ -6,15 +6,15 @@
 usernotes [-v|-q] [connection options] COMMAND [options] ...
 ```
 
-| Command | What it does |
-|---|---|
-| `usernotes read SUBREDDIT USERNAME` | Print a user's notes. |
-| `usernotes add SUBREDDIT USERNAME TEXT` | Add a note, then print their notes again. |
-| `usernotes flags SUBREDDIT` | List the flags a note can carry. |
-| `usernotes search SUBREDDIT PATTERN` | Find notes by user, text, flag or time. |
-| `usernotes remove SUBREDDIT USERNAME` | Delete one of a user's notes. |
-| `usernotes backup SUBREDDIT` | Save the whole usernotes page to a file. |
-| `usernotes restore SUBREDDIT FILE` | Put such a file back as a new wiki revision. |
+| Command                                 | What it does                                 |
+|-----------------------------------------|----------------------------------------------|
+| `usernotes read SUBREDDIT USERNAME`     | Print a user's notes.                        |
+| `usernotes add SUBREDDIT USERNAME TEXT` | Add a note, then print their notes again.    |
+| `usernotes flags SUBREDDIT`             | List the flags a note can carry.             |
+| `usernotes search SUBREDDIT PATTERN`    | Find notes by user, text, flag or time.      |
+| `usernotes remove SUBREDDIT USERNAME`   | Delete one of a user's notes.                |
+| `usernotes backup SUBREDDIT`            | Save the whole usernotes page to a file.     |
+| `usernotes restore SUBREDDIT FILE`      | Put such a file back as a new wiki revision. |
 
 Names are matched ignoring case and the `u/` prefix, and so are subreddit names
 (`toolbox` and `/r/toolbox` are the same).  Every command reads or writes the
