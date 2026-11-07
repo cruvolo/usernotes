@@ -558,6 +558,38 @@ class ChromiumKeyringTest(TempDirTestCase):
         self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'),
+                     'the browser directories are laid out Linux\'s way here')
+class BrowserProfileTest(TempDirTestCase):
+    """``:PROFILE`` naming a profile, rather than giving its directory.
+
+    A name is looked up inside the browser's own directory, which is what
+    ``XDG_CONFIG_HOME`` decides - so these tests point that at a throwaway
+    directory instead of going anywhere near a real profile.
+    """
+
+    def test_a_chromium_profile_is_found_by_its_name(self):
+        config_home = self.path('config')
+        write_chrome_profile(os.path.join(config_home, 'chromium', 'Profile 1'), [
+            ('.reddit.com', 'reddit_session', '', chrome_encrypt('s3cret'), '/', 0, 1),
+        ])
+        spec = cookies.BrowserSpec('chromium', profile='Profile 1', keyring='basictext')
+        with unittest.mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': config_home}):
+            jar = cookies.load_cookie_jar(from_browser=spec, logger=cookies.NULL_LOGGER)
+        self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
+
+    def test_a_firefox_profile_is_found_by_its_name(self):
+        config_home = self.path('config')
+        write_firefox_profile(
+            os.path.join(config_home, 'mozilla', 'firefox', 'abc123.default-release'), [
+                ('', 'reddit_session', 's3cret', '.reddit.com', '/', 1999999999, 1),
+            ])
+        spec = cookies.BrowserSpec('firefox', profile='abc123.default-release')
+        with unittest.mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': config_home}):
+            jar = cookies.load_cookie_jar(from_browser=spec, logger=cookies.NULL_LOGGER)
+        self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
+
+
 class FirefoxCookieTest(TempDirTestCase):
     def load(self, profile, container=None):
         spec = cookies.BrowserSpec('firefox', profile=profile, container=container)
