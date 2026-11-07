@@ -192,6 +192,7 @@ class UsernotesStore:
         if client is not None and (cookies is not None or client_options):
             raise ValueError(
                 'pass either client= or cookies= (with client options), not both')
+        self._owns_client = client is None
         if client is None:
             client = RedditWikiClient(cookies, logger=logger, **client_options)
         self.client = client
@@ -223,6 +224,23 @@ class UsernotesStore:
     def __contains__(self, username):
         self.load()
         return self._users.find(username) is not None
+
+    def close(self):
+        """Release the client's connections, if this store built the client.
+
+        A store constructed with ``cookies=`` owns its client and closes it; a
+        store given ``client=`` does not close it, because the caller is
+        sharing that client with something else.
+        """
+        if self._owns_client:
+            self.client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+        return False
 
     # -- reading ------------------------------------------------------------
 

@@ -564,15 +564,17 @@ def unsquash_link(subreddit, link, *, base_url=DEFAULT_BASE_URL):
 def html_decode(text):
     """Decode HTML entities, the way toolbox does when it reads note text.
 
-    Toolbox shows ``&amp;`` in a stored note as ``&``; this reproduces that,
-    for display only.  Never feed the result back into the store: the stored
-    text is what other moderators and toolbox itself will read.
+    Toolbox shows a stored ``&amp;`` as ``&``; this reproduces that, for
+    display only.  Never feed the result back into the store: the stored text
+    is what other moderators and toolbox itself will read.
 
     .. note::
 
-       This is `html.unescape`, which decodes a few sequences without a
-       trailing semicolon that a browser's HTML parser would not.  Notes that
-       contain entities are vanishingly rare and this is display-only.
+       Toolbox's version renders the text in a detached element and reads the
+       result back, so it also *drops* anything that looks like an HTML tag.
+       This is `html.unescape`, which resolves entities and nothing else, so
+       tag-like text survives here that would disappear in toolbox.  Neither
+       belongs anywhere near what gets written back.
     """
     if not isinstance(text, str):
         return text

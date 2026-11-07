@@ -609,7 +609,36 @@ class BackupTests(StoreTestCase):
         self.assertEqual(self.reddit.requests_to('/r/test/api/wiki/edit'), [])
 
 
+class RecordingOpener:
+    """A stand-in for urllib's opener that records being closed."""
+
+    def __init__(self):
+        self.closed = False
+
+    def open(self, request, timeout=None):
+        raise AssertionError('this test should not make a request')
+
+    def close(self):
+        self.closed = True
+
+
 class ConstructionTests(unittest.TestCase):
+
+    def test_a_store_closes_the_client_it_built(self):
+        opener = RecordingOpener()
+        with UsernotesStore('test', cookies='a=b', opener=opener, min_interval=0) as store:
+            self.assertFalse(store.loaded)
+        self.assertTrue(opener.closed)
+
+    def test_a_store_leaves_a_client_it_was_given_alone(self):
+        opener = RecordingOpener()
+        client = RedditWikiClient('a=b', base_url='https://www.reddit.com',
+                                  opener=opener, min_interval=0)
+        with UsernotesStore('test', client=client):
+            pass
+        self.assertFalse(opener.closed)     # the caller may still be using it
+        client.close()
+        self.assertTrue(opener.closed)
 
     def test_normalizes_the_subreddit(self):
         for value, expected in [
