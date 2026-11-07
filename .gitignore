@@ -1,0 +1,26 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Test / tooling caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Editor / OS junk
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Secrets: never commit anything that holds credentials.  The agent script
+# below carries an API key; keep it out of git unconditionally.
+docker-claude-agent.sh
