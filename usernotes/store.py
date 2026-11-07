@@ -49,6 +49,10 @@ is losing a moderator's work:
 
 The save reason follows toolbox's wording (``create new note on user alice``)
 with this tool's name appended, so a page's revision history stays readable.
+Where toolbox puts a note's time in that reason it is the number it works in
+(``delete note 1559310750000 on user alice``); here it is written the way a
+listing prints it (``delete note 2019-05-31 13:52:30 UTC on user alice``),
+because a moderator reading the history has a listing, not a timestamp.
 
 Backups, and putting them back
 ------------------------------
@@ -91,6 +95,7 @@ from .format import (
     NoteType,
     Page,
     build_page,
+    describe_time,
     note_type,
     note_types_from_config,
     parse_page,
@@ -572,7 +577,8 @@ class UsernotesStore:
             note.link = self._link(link)
         if mod is not _UNSET:
             note.mod = None if mod is None else normalize_username(mod)
-        self._changes.append(f'update note {note.time} on user {user.name}')
+        self._changes.append(
+            f'update note {describe_time(note.time)} on user {user.name}')
         return note
 
     def remove(self, username, time):
@@ -588,7 +594,8 @@ class UsernotesStore:
         user = self.require(username)
         _warn_ambiguous(user, time, 'deleting', self.log)
         note = self._users.remove_note(username, time)
-        self._changes.append(f'delete note {note.time} on user {user.name}')
+        self._changes.append(
+            f'delete note {describe_time(note.time)} on user {user.name}')
         return note
 
     def remove_user(self, username):
@@ -923,7 +930,8 @@ def _warn_ambiguous(user, time, action, log):
     if len(matches) > 1:
         log.warning(
             f'user {user.name!r} has {len(matches)} notes with the same timestamp '
-            f'({time}); {action} the first of them, which is what toolbox does')
+            f'({describe_time(time)}); {action} the first of them, which is what '
+            'toolbox does')
 
 
 def _clean_text(text):

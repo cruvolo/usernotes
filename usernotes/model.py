@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 
 from .errors import NoteNotFoundError, UserNotFoundError
-from .format import Note
+from .format import Note, describe_time
 
 __all__ = [
     'Notes',
@@ -327,6 +327,12 @@ def _key(username):
 
 
 def _describe_times(notes):
+    """The times a user does have, for a message about one they have not.
+
+    Rendered as a listing renders them (see `usernotes.format.describe_time`),
+    because the numbers the store works in are nothing a moderator can match
+    against a note they are looking at.
+    """
     if not notes:
         return 'no notes'
-    return 'times ' + ', '.join(str(note.time) for note in notes)
+    return 'times ' + ', '.join(describe_time(note.time) for note in notes)

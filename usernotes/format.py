@@ -84,6 +84,7 @@ __all__ = [
     'build_page',
     'compress_blob',
     'decompress_blob',
+    'describe_time',
     'html_decode',
     'note_type',
     'note_types_from_config',
@@ -506,6 +507,26 @@ def time_to_stored(ver, time):
     if ver >= 5 and len(str(time)) > _MAX_SECONDS_DIGITS:
         return int(time / 1000)      # truncate towards zero, like Math.trunc
     return time
+
+
+def describe_time(time):
+    """Milliseconds since the epoch as text, for a message about a note.
+
+    A stored time is a number, which says nothing to a moderator reading a
+    message that mentions it, so anything reporting one back - the times a user
+    does have, when a wanted one is missing; two notes sharing a timestamp -
+    renders it the way a listing does: ``2026-11-04 06:12:45 UTC``.
+
+    :param time: milliseconds since the epoch, as `Note.time` holds them.
+        ``0`` (or ``None``) is "no time", which is said rather than shown as
+        1970, since that is not when the note was written.
+    :returns: text.
+    """
+    if not time:
+        return 'unknown time'
+    moment = datetime.datetime.fromtimestamp(int(time) / 1000,
+                                            datetime.timezone.utc)
+    return moment.strftime('%Y-%m-%d %H:%M:%S UTC')
 
 
 def squash_link(permalink, *, base_url=DEFAULT_BASE_URL):

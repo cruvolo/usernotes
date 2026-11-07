@@ -71,10 +71,12 @@ class UserNotesTests(unittest.TestCase):
         self.assertEqual(len(user.find_all(1559310750000)), 2)
 
     def test_require_explains_what_would_have_worked(self):
-        user = model.UserNotes('alice', [note('x', 5000)])
+        # The times come back as a listing renders them, not as the numbers the
+        # store works in, so that they can be checked against a note.
+        user = model.UserNotes('alice', [note('x', 1559310750000)])
         with self.assertRaises(NoteNotFoundError) as caught:
             user.require(9000)
-        self.assertIn('5000', str(caught.exception))
+        self.assertIn('2019-05-31 13:52:30 UTC', str(caught.exception))
 
         empty = model.UserNotes('bob')
         with self.assertRaises(NoteNotFoundError) as caught:
