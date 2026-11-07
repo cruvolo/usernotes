@@ -54,9 +54,10 @@ usernotes [-v|-q] read [options] SUBREDDIT USERNAME
 `usernotes read` prints every note `/r/SUBREDDIT` holds for `USERNAME`, newest
 first, laid out the way toolbox's "User Notes" dialog shows them: the moderator
 who wrote each note and when, the note type in the colour the subreddit gives
-it, the note itself, and the link it is about.  Usernames are matched ignoring
-case and the `u/` prefix, and so are subreddit names (`toolbox` and
-`/r/toolbox` are the same).
+it, the note itself, and the link it is about.  The author is printed as
+`/u/name`, so a terminal that linkifies reddit usernames makes it clickable.
+Names are matched ignoring case and the `u/` prefix, and so are subreddit names
+(`toolbox` and `/r/toolbox` are the same).
 
 ```sh
 # cookies from the browser you are logged in to reddit with
@@ -70,17 +71,19 @@ usernotes read toolbox alice --cookies-from-browser firefox --json \
   | jq '.notes[] | "\(.time_iso) \(.mod): \(.text)"'
 ```
 
-On a terminal the output is coloured, and the type tag takes the colour the
-subreddit configures for it:
+On a terminal the output is coloured: a note takes the colour the subreddit
+configures for its type, tag and text both, and the author and date are grey.
+(The link under a note keeps a colour of its own instead - it is shown in blue,
+so that it still reads as a URL.)
 
 ```
 User Notes - /u/alice
 /r/toolbox - 3 notes
 
 Author                                        Note
-creesch                                       [Spam Watch] spam watch, second time this week
+/u/creesch                                    [Spam Watch] spam watch, second time this week
 about a minute ago (2026-11-07 06:12:45 UTC)  https://www.reddit.com/r/toolbox/comments/abc123/-/def456/
-othermod                                      [Ban] repeated abuse
+/u/othermod                                   [Ban] repeated abuse
 2 days ago (2026-11-05 06:11:20 UTC)
 unknown                                       imported from the old store
 about a year ago (2025-10-03 05:04:15 UTC)

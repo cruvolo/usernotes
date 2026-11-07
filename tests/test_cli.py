@@ -120,12 +120,14 @@ class ReadTests(CliTestCase):
 
         # The newest note first, with its author, type, text, date and link.
         self.assertIn('[Spam Watch] spam watch, again', out)
-        self.assertIn('creesch', out)
+        # The author is spelled the way reddit spells a username, so that a
+        # terminal which linkifies them can make it clickable.
+        self.assertIn('/u/creesch', out)
         self.assertIn(f'about a minute ago ({utc(NOW - 60)})', out)
         self.assertIn(f'{self.reddit.base_url}/r/test/comments/abc123/-/def456/', out)
 
         self.assertIn('[Ban] banned for abuse', out)
-        self.assertIn('othermod', out)
+        self.assertIn('/u/othermod', out)
         self.assertIn(f'about a year ago ({utc(NOW - 400 * DAY)})', out)
 
         self.assertLess(out.index('spam watch, again'), out.index('banned for abuse'))
@@ -150,6 +152,9 @@ class ReadTests(CliTestCase):
         self.assertEqual(status, EXIT_OK)
         self.assertIn('\x1b[38;5;201m[Spam Watch!!]\x1b[0m', out)   # fuchsia
         self.assertIn('\x1b[38;5;196m[Banned]\x1b[0m', out)         # #ff0000
+        # The colour carries onto the note text, not just the tag.
+        self.assertIn('\x1b[38;5;201mspam watch, again\x1b[0m', out)
+        self.assertIn('\x1b[38;5;196mbanned for abuse\x1b[0m', out)
 
     def test_a_user_with_no_notes_is_not_an_error(self):
         status, out, err = self.read(SUBREDDIT, 'nobody')

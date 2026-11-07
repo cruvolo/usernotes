@@ -17,12 +17,19 @@ What is kept, and what is not
 * Note types are coloured the way the subreddit's ``usernoteColors`` says,
   approximated in xterm-256 colours - see `color_index`.
 * The author and the date are grey, as toolbox's usernotes manager shows them
-  (``.mod, .date { color: #A8A8A8 }``).
+  (``.mod, .date { color: #A8A8A8 }``).  The author is spelled ``/u/name``
+  rather than ``name``, which is how reddit spells a username everywhere else
+  and what a terminal that linkifies reddit usernames - rxvt-unicode's matcher
+  and the many others that copied it - needs to see to make one clickable.
 * The link under a note is printed rather than hidden behind the date: it is
   the one field of a note that cannot be read out of a coloured terminal cell.
 
-Two things are deliberately *not* toolbox's behaviour:
+Three things are deliberately *not* toolbox's behaviour:
 
+* A coloured note takes its type's colour on the text as well as on the tag.
+  Toolbox colours the tag only, which is easy to miss at the start of a long
+  line; a whole line in the ban colour is not.  A note with no type, or with
+  one the config does not define, has no colour to take and stays plain.
 * A note whose type the subreddit's config no longer defines is shown by its
   stored key (``[spamwatch]``), uncoloured.  Toolbox renders nothing at all
   there, which for a command line tool would mean silently dropping stored
@@ -344,8 +351,14 @@ def _note_rows(note, note_types, style, now, tz):
     The author column carries the moderator who wrote the note and, under
     them, when they wrote it; the note column carries the type in its colour
     followed by the note text, and under that the link the note is about.
+
+    The author goes in as ``/u/name`` rather than ``name``: that is how a
+    username is spelled anywhere else on reddit, and it is what a terminal
+    that links reddit users (rxvt-unicode's matcher, and the many terminals
+    with the same built in) needs to recognise to make the name clickable.
     """
-    mod = safe_text(note.mod) or 'unknown'
+    author = safe_text(note.mod)
+    mod = f'/u/{author}' if author else 'unknown'
     when = note.datetime()          # aware, always UTC: `tz` is for display
     if note.has_time:
         date = (f'{relative_time(when, now)} '
@@ -356,10 +369,15 @@ def _note_rows(note, note_types, style, now, tz):
     tag, color = _type_tag(note.type, note_types)
     text = safe_text(note.display_text())
     if tag and text:
+        # The note text takes the type's colour as well: a wall of notes is
+        # easier to read when the ban is red and the spam watch is not, and
+        # the tag alone is easy to miss at the start of a long line.  A note
+        # with no type, or one whose type the config does not define, has no
+        # colour to take (`_type_tag` answers ``None``), so it stays plain.
         note_plain = f'{tag} {text}'
-        note_styled = f'{style.color(color, tag)} {text}'
+        note_styled = f'{style.color(color, tag)} {style.color(color, text)}'
     else:
-        note_plain = note_styled = tag or text
+        note_plain = note_styled = style.color(color, tag or text)
 
     link = safe_text(note.link)
     return [

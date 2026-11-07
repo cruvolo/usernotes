@@ -236,10 +236,10 @@ class RenderTests(unittest.TestCase):
             '/r/test - 2 notes',
             '',
             f'{"Author":<{width}}  Note',
-            f'{"creesch":<{width}}  [Ban] second note',
+            f'{"/u/creesch":<{width}}  [Ban] second note',
             f'{"2 days ago (2025-12-30 12:00:00 UTC)":<{width}}  '
             'https://www.reddit.com/r/test/comments/abc/',
-            f'{"othermod":<{width}}  [Spam Watch] first note',
+            f'{"/u/othermod":<{width}}  [Spam Watch] first note',
             'about a year ago (2025-01-01 12:00:00 UTC)',
         ])
 
@@ -247,15 +247,36 @@ class RenderTests(unittest.TestCase):
         listing = self.render(style=Style(True), subreddit='test')
         self.assertIn('\x1b[38;5;196m[Ban]\x1b[0m', listing)          # red
         self.assertIn('\x1b[38;5;201m[Spam Watch]\x1b[0m', listing)   # fuchsia
-        self.assertIn('\x1b[38;5;248mcreesch\x1b[0m', listing)        # grey
+        self.assertIn('\x1b[38;5;248m/u/creesch\x1b[0m', listing)     # grey
         self.assertIn('\x1b[1mUser Notes - /u/alice\x1b[0m', listing)
+
+    def test_the_note_text_takes_the_type_colour_too(self):
+        listing = self.render(style=Style(True), subreddit='test')
+        self.assertIn('\x1b[38;5;196m[Ban]\x1b[0m \x1b[38;5;196msecond note\x1b[0m',
+                      listing)
+        self.assertIn('\x1b[38;5;201m[Spam Watch]\x1b[0m '
+                      '\x1b[38;5;201mfirst note\x1b[0m', listing)
+
+    def test_a_note_with_no_type_is_not_coloured(self):
+        note = Note(text='just a note', time=ms(self.now), mod='creesch')
+        lines = self.render(notes=[note], style=Style(True)).splitlines()
+        self.assertTrue(lines[4].endswith('  just a note'), lines[4])
+        # The author's grey is the only colour on the row: a note with no type
+        # has none to take, so it stays as plain as the uncoloured listing.
+        self.assertEqual(lines[4].count('\x1b[38;5;'), 1)
+
+    def test_a_type_the_config_lost_is_not_coloured_either(self):
+        note = Note(text='odd', time=ms(self.now), mod='creesch', type='oldtype')
+        lines = self.render(notes=[note], style=Style(True)).splitlines()
+        self.assertTrue(lines[4].endswith('  [oldtype] odd'), lines[4])
+        self.assertEqual(lines[4].count('\x1b[38;5;'), 1)
 
     def test_a_coloured_listing_still_lines_up(self):
         plain = self.render().splitlines()
         coloured = self.render(style=Style(True)).splitlines()
         self.assertEqual(len(plain), len(coloured))
         for wanted, line in zip(plain, coloured):
-            self.assertEqual(self.without_escapes(line), wanted.replace('  ', '  '))
+            self.assertEqual(self.without_escapes(line), wanted)
 
     @staticmethod
     def without_escapes(line):
