@@ -798,6 +798,10 @@ class UsernotesStore:
                           f'/r/{self.subreddit}/wiki/{self.page}')
             written = False
         else:
+            if self._changes:
+                self.log.warning(
+                    f'{path} is being restored over {len(self._changes)} unsaved '
+                    f'change(s) to /r/{self.subreddit}; they will not be written')
             if notes is not None and replaced_notes is not None and notes < replaced_notes:
                 self.log.warning(
                     f'{path} holds {notes} note(s) and /r/{self.subreddit}/wiki/'

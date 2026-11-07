@@ -740,6 +740,25 @@ class RestoreTests(StoreTestCase):
         self.assertTrue(any('takes 1 of them away' in message
                             for message in logger.messages), logger.messages)
 
+    def test_a_restore_says_what_it_does_to_unsaved_changes(self):
+        class RecordingLogger:
+            def __init__(self):
+                self.messages = []
+
+            def _record(self, message, *args):
+                self.messages.append(message)
+
+            debug = info = warning = error = _record
+
+        logger = RecordingLogger()
+        store = self.make_store(logger=logger)
+        store.add('alice', 'a note nobody has saved yet')
+        self.wreck()
+        store.restore(self.backup)
+        self.assertTrue(any('unsaved change(s)' in message for message in logger.messages),
+                        logger.messages)
+        self.assertFalse(store.dirty)
+
     def test_the_store_holds_the_restored_notes_afterwards(self):
         self.wreck()
         self.store.restore(self.backup)
