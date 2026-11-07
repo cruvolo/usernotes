@@ -64,6 +64,11 @@ You may take code from both these projects to use within this project as needed.
 4. Create a command line interface to search through a subreddit's usernotes
    for matching entries and display the notes.
 
+5. Create a command line interface to remove a usernote for a user in a
+   subreddit.  The usernote to remove may be identified by any of the
+   following: `--newest` option, `--oldest` option, --timestamp "<ISO UTC
+   time>" (able to be copy/pasted from the `usernote read` output).
+
 ## Repository layout:
 
   * `usernotes/` -- contains the python code
