@@ -36,14 +36,18 @@ own: pass whatever `usernotes.cookies.load_cookie_jar` returns to
 ``UsernotesStore(cookies=...)``.  `usernotes.cli` is the one place that goes
 and gets them, from ``--cookies-from-browser`` or ``--cookies FILE``.
 
-The command implemented so far is ``usernotes read SUBREDDIT USERNAME``, which
-prints one user's notes.  The library underneath it can already edit and back
-up a store, so the rest of the front end is a matter of more commands in
+The commands implemented so far are ``usernotes read SUBREDDIT USERNAME``,
+which prints one user's notes; ``usernotes add SUBREDDIT USERNAME TEXT``, which
+writes a note and prints those notes again, read back from the wiki; and
+``usernotes flags SUBREDDIT``, which lists the note types - the flags - the
+subreddit defines.  The library underneath them can already back a store up, so
+``backup``, ``restore`` and ``search`` are a matter of more commands in
 `usernotes.cli`.
 
 A first look at a subreddit's notes, from a shell and from python::
 
     $ usernotes read toolbox alice --cookies-from-browser firefox
+    $ usernotes add toolbox alice "banned for abuse" --flag ban
 
     from usernotes import cookies
     from usernotes.store import UsernotesStore

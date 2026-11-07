@@ -56,7 +56,7 @@ You may take code from both these projects to use within this project as needed.
    set ("spam watch", "spam warning", "ban", "permanent ban", etc.).  If a flag
    is not specified, the most recent flag, if any, should be used.  After an
    entry has been added, the entries for that username should be read and
-   displayed.
+   displayed.  User must have a way to discover the available flags.
 
 3. Create a command line interface to back up and, seperately, to restore a
    subreddit's usernotes.
@@ -119,14 +119,24 @@ user know.
 
 The library is in place: reading, editing, saving and backing up usernotes
 all work against reddit's wiki API, with tests that never touch reddit (a
-throwaway HTTP server on 127.0.0.1 stands in for it).  Goal 1 is done:
-`usernotes read SUBREDDIT USERNAME` prints one user's notes the way toolbox's
-"User Notes" dialog shows them, with `--cookies-from-browser` /
-`--cookies FILE` for a session and `--json` for scripts.  Goals 2, 3 and 4
-(`add`, `backup`, `restore`, `search`) are not written yet - the library calls
-they need are already there, and `cli.py` is where they go.
+throwaway HTTP server on 127.0.0.1 stands in for it).  Goals 1 and 2 are done:
 
-Nothing in the package has been run against a real subreddit's notes.
+  * `usernotes read SUBREDDIT USERNAME` prints one user's notes the way
+    toolbox's "User Notes" dialog shows them
+  * `usernotes add SUBREDDIT USERNAME TEXT` writes a note - with `--flag` for
+    the note type, `--link` for what it is about - and prints those notes
+    again, read back from the wiki.  Without `--flag` the note keeps the flag
+    of the user's most recent flagged note; `--flag none` sets none.
+  * `usernotes flags SUBREDDIT` lists the flags the subreddit defines, which
+    is how a moderator finds out what `--flag` accepts
+
+All three take `--cookies-from-browser` / `--cookies FILE` for a session, and
+`--json` for scripts.  Goals 3 and 4 (`backup`, `restore`, `search`) are not
+written yet - the library calls they need are already there, and `cli.py` is
+where they go.
+
+`usernotes read` has been run against a real subreddit's notes, from Firefox
+cookies, and works.  Nothing else here has.
 
 ## Cookies
 
