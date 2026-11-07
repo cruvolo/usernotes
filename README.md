@@ -74,7 +74,7 @@ that say where to get one - and which reddit to talk to - are **global**: like
 `-v` and `-q`, they go before the command rather than after it.  See
 [Cookies](#cookies) below.
 
-See [command.md](command.md) for details about each command.  Or run `usernotes
+See [commands.md](commands.md) for details about each command.  Or run `usernotes
 COMMAND --help`.
 
 ### Cookies
@@ -106,6 +106,75 @@ anonymous.  The tool says so before it makes one, and naming the keyring settles
 it: `usernotes --cookies-from-browser chromium+gnomekeyring ...`.  A store with
 no keyring-encrypted cookies in it is read without any keyring access at all,
 and a keyring that cannot be read costs only those cookies, not the store.
+
+**Browsers.**  `--cookies-from-browser` takes
+`BROWSER[+KEYRING][:PROFILE][::CONTAINER]`, and knows these browsers (`all`
+means Windows, macOS and Linux):
+
+| Browser    | Operating systems |
+|------------|-------------------|
+| `brave`    | all               |
+| `chrome`   | all               |
+| `chromium` | all               |
+| `edge`     | all               |
+| `firefox`  | all               |
+| `opera`    | all               |
+| `safari`   | macOS             |
+| `vivaldi`  | all               |
+| `whale`    | all               |
+
+Firefox stores its cookie values in the clear, which makes it the most reliable
+source.  Safari is macOS only.  On Windows the values can only be decrypted as
+the same user account as the browser, and on macOS the keychain may ask for
+permission first.
+
+**Keyrings** are Linux only, and say where a Chromium-family browser keeps the
+key it encrypts its cookie values with.  The chromium family is the whole of it
+- `brave`, `chrome`, `chromium`, `edge`, `opera`, `vivaldi` and `whale` - since
+Firefox needs no keyring and Safari is not on Linux:
+
+| Keyring        | Operating system | Browsers        | What it is                                     |
+|----------------|------------------|-----------------|------------------------------------------------|
+| `basictext`    | Linux            | chromium family | Chromium's built-in key, so no keyring         |
+| `gnomekeyring` | Linux            | chromium family | the freedesktop secret service (GNOME keyring) |
+| `kwallet`      | Linux            | chromium family | KWallet 4                                      |
+| `kwallet5`     | Linux            | chromium family | KWallet 5                                      |
+| `kwallet6`     | Linux            | chromium family | KWallet 6                                      |
+
+Leave `+KEYRING` out and it is guessed from the desktop environment, which
+cannot name every desktop, so naming it is the way to be sure.  On Windows and
+macOS a `+KEYRING` is accepted and ignored, since those read their key by other
+means.
+
+**Profiles.**  `:PROFILE` says which profile to read.  Left out, the newest
+cookie database under the browser's own directory is used, which is normally the
+profile you last used.  It is either the name the browser knows the profile by,
+or a path to the profile's directory - a leading `~` is expanded here, so quote
+it to keep the shell out of it:
+
+```sh
+usernotes --cookies-from-browser "chromium:Profile 1" read toolbox alice
+usernotes --cookies-from-browser firefox:abc123.default-release read toolbox alice
+usernotes --cookies-from-browser "chromium:~/.config/chromium/Default" read toolbox alice
+usernotes --cookies-from-browser "chromium+gnomekeyring:Profile 1" read toolbox alice
+```
+
+`opera` has no profiles, so a `:PROFILE` for it is not used, and Safari's
+`:PROFILE` is a path to its `Cookies.binarycookies` file rather than a name.
+
+**Containers.**  `::CONTAINER` is Firefox's multi-account containers, so it is
+Firefox only - the other browsers ignore it.  It names a container the way
+Firefox spells it (matched exactly, case included), `::none` reads the cookies
+that are in no container, and leaving it out reads every container's cookies
+together.  It stands on its own when no profile is given, and follows one when
+there is:
+
+```sh
+usernotes --cookies-from-browser firefox::Work read toolbox alice
+usernotes --cookies-from-browser firefox:abc123.default-release::Personal \
+    read toolbox alice
+usernotes --cookies-from-browser firefox::none read toolbox alice
+```
 
 ### Exit status
 
