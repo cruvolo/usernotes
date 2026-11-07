@@ -1,6 +1,8 @@
 # usernotes
 
-Command line tools for the reddit Moderator Toolbox **usernotes** store.
+Command line tools for the [reddit Moderator
+Toolbox](https://github.com/toolbox-team/reddit-moderator-toolbox)
+**usernotes** store.
 
 Usernotes are the notes a subreddit's moderators keep about users.  Toolbox
 stores them on the subreddit's wiki page
@@ -9,21 +11,22 @@ encoded JSON, and this package reads, edits and backs that store up outside a
 browser.  It works on the same wiki page toolbox does, so a note added on
 either side shows up in both.
 
-The whole set is implemented: `usernotes read`, `add`, `flags`, `search`,
-`remove`, `backup` and `restore`.
+The following operations are implemented: `usernotes read`, `add`, `flags`,
+`search`, `remove`, `backup` and `restore`.
 
 ## Requirements
 
 * Python 3.11 or newer.
 * No third-party runtime libraries on Windows or macOS - the standard library
-  is all that is needed.
+  is all that is needed.  ***Note: Windows and macOS are untested at this time.
+  Please report any bugs, errors or problems as github issues.***
 * On Linux, `secretstorage` is installed with the package: it is what reads a
   Chromium cookie store's key out of the desktop keyring over D-Bus, and
   without it those cookies cannot be decrypted.  It comes with `cryptography`
   and `jeepney` of its own.  On Debian-based systems install the
   `python3-secretstorage` package.
 * A reddit account that moderates the subreddit, unless its usernotes page has
-  been left publicly readable.
+  been left publicly readable (unlikely).
 
 ## Build and install
 
