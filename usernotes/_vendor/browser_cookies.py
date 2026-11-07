@@ -980,21 +980,116 @@ def _get_kwallet_password(browser_keyring_name, keyring, logger):
         return b''
 
 
+# usernotes: the schema chromium stores its cookie key under, which is how it
+# finds the item again - where yt-dlp matches on the label alone.
+# https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/os_crypt/async/browser/freedesktop_secret_key_provider.h
+_KEYRING_SCHEMA = {'xdg:schema': 'chrome_libsecret_os_crypt_password_v2'}
+
+
 def _get_gnome_keyring_password(browser_keyring_name, logger):
     if not secretstorage:
         logger.error(f'secretstorage not available {_SECRETSTORAGE_UNAVAILABLE_REASON}')
         return b''
-    # the Gnome keyring does not seem to organise keys in the same way as KWallet,
-    # using `dbus-monitor` during startup, it can be observed that chromium lists all keys
-    # and presumably searches for its key in the list. It appears that we must do the same.
-    # https://github.com/jaraco/keyring/issues/556
-    with contextlib.closing(secretstorage.dbus_init()) as con:
-        col = secretstorage.get_default_collection(con)
-        for item in col.get_all_items():
-            if item.get_label() == f'{browser_keyring_name} Safe Storage':
-                return item.get_secret()
-        logger.error('failed to read from keyring')
+    # usernotes: yt-dlp lets anything the secret service raises escape, which
+    # turns "this keyring item cannot be read" into "this browser's cookies
+    # cannot be read" - so a stale item path in the keyring, a locked keyring,
+    # or a service that is not answering costs every cookie in the store
+    # rather than the ones that need the key.  A key that cannot be read is
+    # reported and comes back empty instead, which leaves the 'v10' cookies
+    # readable, and `--cookies FILE` is always there as the way round it.
+    try:
+        return _read_gnome_keyring_password(browser_keyring_name, logger)
+    except Exception as e:
+        logger.error(f'could not read the {browser_keyring_name} cookie key from the '
+                     f'keyring: {error_to_str(e)}')
         return b''
+
+
+def _read_gnome_keyring_password(browser_keyring_name, logger):
+    # The Gnome keyring does not organise keys in the same way as KWallet:
+    # chromium asks it for the item it wants and matches the one it gets back.
+    # https://github.com/jaraco/keyring/issues/556
+    label = f'{browser_keyring_name} Safe Storage'
+    labels = []
+    unreadable = False
+    with contextlib.closing(secretstorage.dbus_init()) as con:
+        for item in _keyring_items(con, logger):
+            try:
+                item_label = item.get_label()
+            except Exception as e:
+                logger.debug(f'ignoring a keyring item: {error_to_str(e)}')
+                continue
+            labels.append(item_label)
+            if item_label != label:
+                continue
+            try:
+                if item.is_locked() and item.unlock():
+                    logger.warning(f'the keyring item "{label}" is locked')
+                    unreadable = True
+                    continue
+                return item.get_secret()
+            except Exception as e:
+                logger.warning(f'could not read the keyring item "{label}": {error_to_str(e)}')
+                unreadable = True
+    if not unreadable:
+        logger.error(f'failed to read from keyring: no "{label}" item'
+                     f' (found: {", ".join(labels) or "nothing"})')
+    return b''
+
+
+def _keyring_items(con, logger):
+    """Every chromium-family cookie key in the keyring.
+
+    usernotes: yt-dlp walks every item in the keyring and reads each one's
+    label to find its item.  An item reads its own label as it is built, and
+    secretstorage builds one for every path it is given - so a single path in
+    the keyring that no longer resolves, which secretstorage reports as "Item
+    does not exist!", stops that walk before it reaches the item that matters,
+    and the browser's cookies go with it.  So the search is the one chromium
+    itself makes (by schema attribute, which the secret service does rather
+    than the caller) and each item is built on its own, so that a path that is
+    gone costs that item and nothing else.
+    """
+    collection = _default_keyring_collection(con)
+    if collection.is_locked():
+        logger.debug('unlocking the keyring')
+        if collection.unlock():
+            logger.warning('the keyring is locked and was not unlocked')
+            return
+    try:
+        paths, = collection._collection.call('SearchItems', 'a{ss}', _KEYRING_SCHEMA)
+    except AttributeError:
+        # A secretstorage laid out differently to the one this was written
+        # against: its own search, which stops at a path that is gone.
+        yield from _tolerantly(collection.search_items(_KEYRING_SCHEMA), logger)
+        return
+    for path in paths:
+        try:
+            yield secretstorage.Item(con, path)
+        except Exception as e:
+            logger.debug(f'ignoring the keyring item at "{path}": {error_to_str(e)}')
+
+
+def _tolerantly(items, logger):
+    """Yield from *items*, stopping at the first failure rather than raising."""
+    try:
+        yield from items
+    except Exception as e:
+        logger.debug(f'stopped reading keyring items: {error_to_str(e)}')
+
+
+def _default_keyring_collection(con):
+    """The collection chromium keeps its cookie key in.
+
+    usernotes: `get_default_collection` creates a collection when the keyring
+    has none, and reading a cookie store has no business writing to a keyring -
+    so the alias that call would follow is read directly where secretstorage
+    lets us, and a keyring without one is reported rather than added to.
+    """
+    read_alias = getattr(secretstorage, 'get_collection_by_alias', None)
+    if read_alias is None:
+        return secretstorage.get_default_collection(con)
+    return read_alias(con, 'default')
 
 
 def _get_linux_keyring_password(browser_keyring_name, keyring, logger):

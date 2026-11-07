@@ -83,16 +83,51 @@ def report_from_mate():
         yield
 
 
-@contextlib.contextmanager
-def secret_service_stub(secret=CHROME_KEYRING_SECRET):
-    """Stand in for reading the browser's key out of the freedesktop keyring.
+#: The keyring item chromium writes its cookie key into: the path the secret
+#: service gives it, the label it gives it, and the secret itself.
+CHROMIUM_KEYRING_ITEM = ('/org/freedesktop/secrets/collection/login/1',
+                         'Chromium Safe Storage', CHROME_KEYRING_SECRET)
 
-    Yields the mock, so a test can assert whether the key was asked for at all.
+
+def fake_keyring(items=(CHROMIUM_KEYRING_ITEM,), *, ghosts=(), locked=False,
+                 unlock_dismissed=True, by_alias=True):
+    """A stand-in for the ``secretstorage`` module, as a keyring behaves.
+
+    :param items: ``(path, label, secret)`` for the items the keyring's search
+        finds.
+    :param ghosts: paths the search also returns that no longer resolve.
+        Building an item for one raises, which is what a real keyring does and
+        what secretstorage reports as "Item does not exist!".
+    :param locked: whether the collection is locked.
+    :param unlock_dismissed: what unlocking it answers: ``True`` is "the prompt
+        went unanswered", which is how a locked keyring fails.
+    :param by_alias: whether this secretstorage can read the default alias
+        without creating a collection when there is none.
     """
-    with unittest.mock.patch.object(
-            vendored_cookies, '_get_gnome_keyring_password',
-            return_value=secret) as lookup:
-        yield lookup
+    module = unittest.mock.Mock()
+    module.dbus_init.return_value = unittest.mock.Mock()
+    collection = module.get_default_collection.return_value = unittest.mock.Mock()
+    module.get_collection_by_alias.return_value = collection
+    if not by_alias:
+        del module.get_collection_by_alias
+    collection.is_locked.return_value = locked
+    collection.unlock.return_value = unlock_dismissed
+    paths = list(ghosts) + [path for path, _, _ in items]
+    collection._collection.call.return_value = (paths,)
+    secrets = {path: (label, secret) for path, label, secret in items}
+
+    def build_item(connection, path):
+        if path not in secrets:
+            raise RuntimeError('Item does not exist!')
+        label, secret = secrets[path]
+        item = unittest.mock.Mock()
+        item.get_label.return_value = label
+        item.is_locked.return_value = False
+        item.get_secret.return_value = secret
+        return item
+
+    module.Item.side_effect = build_item
+    return module
 
 
 def write_chrome_profile(root, rows, meta_version=23):
@@ -409,39 +444,68 @@ class ChromiumCookieTest(TempDirTestCase):
 class ChromiumKeyringTest(TempDirTestCase):
     """The v11 cookies, whose key comes from the desktop keyring.
 
-    No test here touches a real keyring: the secret service lookup is stubbed
-    out, and the environment is the one from the bug report - MATE started from
-    lightdm, which is a desktop neither chromium nor the vendored detection has
-    a name for, so the keyring is guessed to be basic-text and the guessed
-    answer has to be questioned when a v11 cookie turns up.
+    No test here touches a real keyring: `fake_keyring` stands in for the
+    `secretstorage` module.  The environment is the one from the bug report -
+    MATE started from lightdm, which is a desktop neither chromium nor the
+    vendored detection has a name for, so the keyring is guessed to be
+    basic-text and that guess has to be questioned when a v11 cookie turns up.
     """
 
-    def load(self, profile, keyring=None, logger=cookies.NULL_LOGGER, secret=CHROME_KEYRING_SECRET):
+    def load(self, profile, keyring=None, keyring_module=None, logger=cookies.NULL_LOGGER):
+        """Load *profile*'s cookies with *keyring_module* in place of the real
+        secret service."""
+        module = fake_keyring() if keyring_module is None else keyring_module
         spec = cookies.BrowserSpec('chromium', profile=profile, keyring=keyring)
-        with report_from_mate(), secret_service_stub(secret) as lookup:
-            self.lookup = lookup
+        with report_from_mate(), unittest.mock.patch.object(
+                vendored_cookies, 'secretstorage', module):
+            self.keyring = module
             return cookies.load_cookie_jar(from_browser=spec, logger=logger)
 
-    def test_v11_cookie_is_decrypted_from_the_secret_service(self):
+    def v11_profile(self):
         profile = self.path('chromium-profile')
         write_chrome_profile(profile, [
             ('.reddit.com', 'reddit_session', '', chrome_v11_encrypt('s3cret'), '/', 0, 1),
         ])
-        jar = self.load(profile)
-        self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
-        self.lookup.assert_called_once()
+        return profile
 
-    def test_v11_cookie_is_skipped_when_the_secret_service_has_nothing(self):
+    def test_v11_cookie_is_decrypted_from_the_secret_service(self):
+        jar = self.load(self.v11_profile())
+        self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
+        self.keyring.dbus_init.assert_called_once()
+
+    def test_v11_cookie_is_skipped_when_the_keyring_has_no_such_item(self):
         profile = self.path('chromium-profile')
         write_chrome_profile(profile, [
             ('.reddit.com', 'reddit_session', '', chrome_v11_encrypt('s3cret'), '/', 0, 1),
             ('.reddit.com', 'token_v2', '', chrome_encrypt('tok'), '/', 0, 1),
         ])
         stream = io.StringIO()
-        jar = self.load(profile, secret=b'', logger=cookies.Logger(stream=stream))
-        # v10 still works: only the v11 cookie is given up on, once.
+        jar = self.load(profile, keyring_module=fake_keyring(items=()),
+                        logger=cookies.Logger(stream=stream))
+        # v10 still works: only the v11 cookie is given up on.
         self.assertEqual(cookie_map(jar).keys(), {'token_v2'})
         self.assertIn('cannot decrypt v11 cookies', stream.getvalue())
+        self.assertIn('no "Chromium Safe Storage" item', stream.getvalue())
+
+    def test_an_item_that_is_still_listed_but_gone_costs_only_itself(self):
+        # A keyring can list an item path that no longer resolves, and building
+        # an item for it raises - before the item that matters does, if it
+        # comes first, which is why the search and the building are separate.
+        ghost = '/org/freedesktop/secrets/collection/login/0'
+        module = fake_keyring(ghosts=(ghost,))
+        stream = io.StringIO()
+        jar = self.load(self.v11_profile(), keyring_module=module,
+                        logger=cookies.Logger(stream=stream, level='debug'))
+        self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
+        self.assertIn(f'ignoring the keyring item at "{ghost}"', stream.getvalue())
+
+    def test_a_locked_keyring_is_reported(self):
+        stream = io.StringIO()
+        profile = self.v11_profile()
+        jar = self.load(profile, keyring_module=fake_keyring(locked=True),
+                        logger=cookies.Logger(stream=stream))
+        self.assertEqual(cookie_map(jar), {})
+        self.assertIn('the keyring is locked and was not unlocked', stream.getvalue())
 
     def test_a_store_without_v11_cookies_never_asks_for_a_key(self):
         profile = self.path('chromium-profile')
@@ -452,25 +516,45 @@ class ChromiumKeyringTest(TempDirTestCase):
         # basic-text store cannot pop up a keyring prompt or need secretstorage.
         self.assertEqual(self.load(profile).get_cookie_header(REDDIT_URL),
                          'reddit_session=s3cret')
-        self.lookup.assert_not_called()
+        self.keyring.dbus_init.assert_not_called()
 
     def test_an_explicit_keyring_is_not_second_guessed(self):
-        profile = self.path('chromium-profile')
-        write_chrome_profile(profile, [
-            ('.reddit.com', 'reddit_session', '', chrome_v11_encrypt('s3cret'), '/', 0, 1),
-        ])
-        jar = self.load(profile, keyring='basictext')
+        jar = self.load(self.v11_profile(), keyring='basictext')
         self.assertEqual(cookie_map(jar), {})
-        self.lookup.assert_not_called()
+        self.keyring.dbus_init.assert_not_called()
 
     def test_naming_the_keyring_reads_it(self):
         # `chromium+gnomekeyring`: the workaround for this case, and what the
         # command line tells a user to pass when it cannot work it out.
+        jar = self.load(self.v11_profile(), keyring='gnomekeyring')
+        self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
+
+    def test_a_keyring_that_cannot_be_read_costs_only_its_cookies(self):
+        # Whatever the keyring does - no collection, no service, a stale path
+        # everywhere - the cookies that need no key are still the store's.
         profile = self.path('chromium-profile')
         write_chrome_profile(profile, [
             ('.reddit.com', 'reddit_session', '', chrome_v11_encrypt('s3cret'), '/', 0, 1),
+            ('.reddit.com', 'token_v2', '', chrome_encrypt('tok'), '/', 0, 1),
         ])
-        jar = self.load(profile, keyring='gnomekeyring')
+        broken = fake_keyring()
+        broken.get_collection_by_alias.side_effect = RuntimeError('Item does not exist!')
+        stream = io.StringIO()
+        jar = self.load(profile, keyring_module=broken,
+                        logger=cookies.Logger(stream=stream))
+        self.assertEqual(cookie_map(jar).keys(), {'token_v2'})
+        self.assertIn('could not read the Chromium cookie key from the keyring', stream.getvalue())
+        self.assertIn('Item does not exist!', stream.getvalue())
+
+    def test_a_secretstorage_without_the_alias_helper_still_reads(self):
+        # An older secretstorage: `get_default_collection` is the way to the
+        # collection, and the collection's own search is the way to the item.
+        module = fake_keyring(by_alias=False)
+        collection = module.get_default_collection.return_value
+        del collection._collection
+        collection.search_items.return_value = [
+            module.Item(module.dbus_init.return_value, CHROMIUM_KEYRING_ITEM[0])]
+        jar = self.load(self.v11_profile(), keyring_module=module)
         self.assertEqual(jar.get_cookie_header(REDDIT_URL), 'reddit_session=s3cret')
 
 

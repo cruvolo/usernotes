@@ -164,8 +164,30 @@ the browser encrypted with a key it keeps in the keyring - are dropped.
 * Reading the secret service needs the optional `secretstorage` package
   (`pip install 'usernotes[gnome-keyring]'`). Without it a `v11` cookie is
   reported as undecryptable, with the reason, and `--cookies FILE` still works.
-* This is the only change to the vendored code's behaviour; it is marked with a
-  `# usernotes:` comment, like every other edit in that file.
+* Three things about *how* the item is read are `usernotes`' own, all of them
+  because a keyring that cannot be read is a store whose `v11` cookies cannot
+  be decrypted - not a store that cannot be read at all:
+  * **A failure is not fatal.** yt-dlp lets anything the secret service raises
+    escape, which costs every cookie in the store rather than the ones that
+    need the key. Here it is logged and answers "no key", so the `v10` cookies
+    - the majority in practice - are still read, and the command line says what
+    is missing.
+  * **The item is searched for, not walked to.** yt-dlp looks at every item in
+    the collection, and secretstorage reads an item's label as it builds the
+    item: one path in the keyring that no longer resolves (which secretstorage
+    reports as `Item does not exist!`) stops that walk before the item that
+    matters, and the browser's cookies go with it. The search is the one
+    chromium itself makes, `{xdg:schema:
+    chrome_libsecret_os_crypt_password_v2}`, and each returned path is built
+    into an item on its own so that a path that is gone costs that item and
+    nothing else.
+  * **The default collection is read, not created.** secretstorage's
+    `get_default_collection` creates a collection when the keyring has none;
+    reading cookies has no business writing to a keyring, so the `default`
+    alias is read directly where secretstorage offers that, and a keyring
+    without one is reported instead.
+* Every one of those edits is marked with a `# usernotes:` comment, like the
+  rest of the changes to the vendored code.
 
 ### Safari (`_extract_safari_cookies`, `yt_dlp/cookies.py:568`)
 
