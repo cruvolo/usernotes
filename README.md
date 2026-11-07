@@ -47,7 +47,7 @@ python3 -m usernotes --version
 ## Use
 
 ```
-usernotes [-v|-q] COMMAND [options] ...
+usernotes [-v|-q] [connection options] COMMAND [options] ...
 ```
 
 | Command | What it does |
@@ -61,8 +61,10 @@ usernotes [-v|-q] COMMAND [options] ...
 | `usernotes restore SUBREDDIT FILE` | Put such a file back as a new wiki revision. |
 
 Names are matched ignoring case and the `u/` prefix, and so are subreddit names
-(`toolbox` and `/r/toolbox` are the same).  Reading a subreddit's notes normally
-needs a moderator's session, which is what the cookie options are for - see
+(`toolbox` and `/r/toolbox` are the same).  Every command reads or writes the
+subreddit's wiki page, so every command needs a session: the options that say
+where to get one, and which reddit to talk to, are **global** - like `-v` and
+`-q`, they go before the command rather than after it.  See
 [Cookies](#cookies) below.
 
 ### Reading
@@ -74,14 +76,15 @@ it, the note itself, and the link it is about.  The author is printed as
 `/u/name`, so a terminal that linkifies reddit usernames makes it clickable.
 
 ```sh
-# cookies from the browser you are logged in to reddit with
-usernotes read toolbox alice --cookies-from-browser firefox
+# cookies from the browser you are logged in to reddit with.  They are
+# global options, like -v: they go before the command, not after it.
+usernotes --cookies-from-browser firefox read toolbox alice
 
 # cookies exported to a Netscape cookies.txt file
-usernotes read r/toolbox u/alice --cookies cookies.txt
+usernotes --cookies cookies.txt read r/toolbox u/alice
 
 # JSON, for a script
-usernotes read toolbox alice --cookies-from-browser firefox --json \
+usernotes --cookies-from-browser firefox read toolbox alice --json \
   | jq '.notes[] | "\(.time_iso) \(.mod): \(.text)"'
 ```
 
@@ -235,7 +238,7 @@ as it stands.  The file is what `restore` writes back.
 
 ```sh
 # usernotes_<subreddit>_<UTC timestamp>.json in the current directory
-usernotes backup toolbox --cookies-from-browser firefox
+usernotes --cookies-from-browser firefox backup toolbox
 
 # ... or wherever you want it
 usernotes backup toolbox --directory ~/usernotes-backups
@@ -260,8 +263,8 @@ for putting a page straight after a bad bulk edit.
 usernotes restore toolbox usernotes_toolbox_20261107T061743Z.json --dry-run
 
 # do it
-usernotes restore toolbox usernotes_toolbox_20261107T061743Z.json \
-  --cookies-from-browser firefox
+usernotes --cookies-from-browser firefox restore toolbox \
+  usernotes_toolbox_20261107T061743Z.json
 ```
 
 What keeps it honest:
@@ -283,11 +286,14 @@ page, not a name.
 
 ### Options
 
+`global` options go before the command - `usernotes --cookies FILE read toolbox
+alice` - and the rest go after it, where the command's own `--help` lists them.
+
 | Option | Commands | What it does |
 |---|---|---|
-| `--cookies-from-browser SPEC` | all | Take the reddit session cookies from a browser: `BROWSER[+KEYRING][:PROFILE][::CONTAINER]`, yt-dlp's grammar.  Browsers: `brave`, `chrome`, `chromium`, `edge`, `firefox`, `opera`, `safari`, `vivaldi`, `whale`; keyrings (Linux): `basictext`, `gnomekeyring`, `kwallet`, `kwallet5`, `kwallet6`. |
-| `--cookies FILE` | all | Take them from a Netscape `cookies.txt` instead, for when the browser's store cannot be read.  Both may be given; the file wins. |
-| `--base-url URL` | all | The reddit origin to talk to; `https://old.reddit.com` works too. |
+| `--cookies-from-browser SPEC` | global | Take the reddit session cookies from a browser: `BROWSER[+KEYRING][:PROFILE][::CONTAINER]`, yt-dlp's grammar.  Browsers: `brave`, `chrome`, `chromium`, `edge`, `firefox`, `opera`, `safari`, `vivaldi`, `whale`; keyrings (Linux): `basictext`, `gnomekeyring`, `kwallet`, `kwallet5`, `kwallet6`. |
+| `--cookies FILE` | global | Take them from a Netscape `cookies.txt` instead, for when the browser's store cannot be read.  Both may be given; the file wins. |
+| `--base-url URL` | global | The reddit origin to talk to; `https://old.reddit.com` works too. |
 | `--flag FLAG` | `add` | The flag to set, by name or key as `usernotes flags SUBREDDIT` lists it.  Defaults to the flag on the user's most recent flagged note; `none` sets no flag. |
 | `--link URL` | `add` | What the note is about: an absolute URL, or a path such as `/r/toolbox/comments/abc123/`. |
 | `-E`, `--regex` | `search` | Read PATTERN as a regular expression, matched anywhere in a field. |
@@ -312,7 +318,13 @@ does.  A note is recorded against that account.  Without either option the
 request goes out anonymously, which only works for a subreddit whose usernotes
 page is public, and cannot write.  If the browser's cookie store
 cannot be read (a locked keyring, a different user account, Safari), export the
-cookies with a browser extension and pass them with `--cookies FILE`.
+cookies with a browser extension and pass them with `--cookies FILE`.  Either
+way they go *before* the command, as the global options they are:
+
+```sh
+usernotes --cookies-from-browser firefox read toolbox alice
+usernotes --cookies ~/cookies.txt search toolbox spam
+```
 
 Cookies are credentials: the tool never prints or logs them, only the *names*
 of the cookies it found.

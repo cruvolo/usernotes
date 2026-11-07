@@ -85,16 +85,27 @@ class CliTestCase(unittest.TestCase):
                 handle.write(f'{host}\tFALSE\t/\tFALSE\t0\t{name}\t{value}\n')
         return path
 
-    def run_cli(self, *argv):
-        """Run the tool the way a shell would; ``(status, stdout, stderr)``."""
+    def run_cli(self, *argv, cookies=None):
+        """Run the tool the way a shell would; ``(status, stdout, stderr)``.
+
+        :param cookies: the file to pass as the global ``--cookies`` option,
+            which goes before the command like ``-v`` - the test's own cookies
+            file by default.  ``''`` passes none at all, which is how the tests
+            that have to go anonymous ask for it, and a path passes that file
+            instead of the test's one.
+        """
+        args = list(argv)
+        cookies = self.cookies if cookies is None else cookies
+        if cookies:
+            args[:0] = ['--cookies', cookies]
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            status = main(list(argv), client_options=self.client_options())
+            status = main(args, client_options=self.client_options())
         return status, out.getvalue(), err.getvalue()
 
     def read(self, *argv):
         """``usernotes read`` with the cookies file, and what it printed."""
-        return self.run_cli('read', *argv, '--cookies', self.cookies)
+        return self.run_cli('read', *argv)
 
     def client_options(self):
         """Point the CLI at the fake reddit, with the pacing turned off."""
@@ -183,7 +194,7 @@ class ReadTests(CliTestCase):
 
     def test_a_public_page_can_be_read_without_cookies(self):
         self.start_reddit(cookie=None)
-        status, out, err = self.run_cli('read', SUBREDDIT, 'alice')
+        status, out, err = self.run_cli('read', SUBREDDIT, 'alice', cookies='')
         self.assertEqual(status, EXIT_OK)
         self.assertIn('[Spam Watch] spam watch, again', out)
         self.assertEqual(err, '')
@@ -262,7 +273,7 @@ class AddTests(CliTestCase):
 
     def add(self, *argv):
         """``usernotes add`` with the cookies file, and what it printed."""
-        return self.run_cli('add', *argv, '--cookies', self.cookies)
+        return self.run_cli('add', *argv)
 
     def stored(self, username='alice'):
         """The notes the fake reddit now holds for *username*, newest first."""
@@ -420,7 +431,7 @@ class FlagsTests(CliTestCase):
     """``usernotes flags``: how a moderator finds out what --flag accepts."""
 
     def flags(self, *argv):
-        return self.run_cli('flags', *argv, '--cookies', self.cookies)
+        return self.run_cli('flags', *argv)
 
     def test_lists_toolboxs_defaults_when_the_subreddit_defines_none(self):
         status, out, err = self.flags(SUBREDDIT)
@@ -462,7 +473,7 @@ class SearchCommandTests(CliTestCase):
     """``usernotes search``: finding notes by what is known about them."""
 
     def search(self, *argv):
-        return self.run_cli('search', *argv, '--cookies', self.cookies)
+        return self.run_cli('search', *argv)
 
     def test_finds_a_note_by_its_text(self):
         status, out, err = self.search(SUBREDDIT, 'banned for abuse')
@@ -555,7 +566,7 @@ class RemoveCommandTests(CliTestCase):
     """``usernotes remove``: taking one note away."""
 
     def remove(self, *argv):
-        return self.run_cli('remove', *argv, '--cookies', self.cookies)
+        return self.run_cli('remove', *argv)
 
     def stored(self, username='alice'):
         page = fmt.parse_page(self.reddit.page(SUBREDDIT), SUBREDDIT)
@@ -668,7 +679,7 @@ class BackupCommandTests(CliTestCase):
         self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
 
     def backup(self, *argv):
-        return self.run_cli('backup', *argv, '--cookies', self.cookies)
+        return self.run_cli('backup', *argv)
 
     def test_writes_the_page_and_says_what_it_wrote(self):
         path = os.path.join(self.directory, 'notes.json')
@@ -734,7 +745,7 @@ class RestoreCommandTests(CliTestCase):
         return path
 
     def restore(self, *argv):
-        return self.run_cli('restore', *argv, '--cookies', self.cookies)
+        return self.run_cli('restore', *argv)
 
     def empty_page(self):
         """Replace the live page with an empty one, as a bad edit would."""
@@ -760,9 +771,8 @@ class RestoreCommandTests(CliTestCase):
     def test_a_backup_and_a_restore_round_trip(self):
         # The pair, end to end: back the page up, add a note, put it back.
         path = self.write_backup('round.json', self.reddit.page(SUBREDDIT))
-        self.run_cli('backup', SUBREDDIT, '--output', path, '--cookies', self.cookies)
-        self.run_cli('add', SUBREDDIT, 'alice', 'added since the backup',
-                     '--cookies', self.cookies)
+        self.run_cli('backup', SUBREDDIT, '--output', path)
+        self.run_cli('add', SUBREDDIT, 'alice', 'added since the backup')
         self.assertIn('added since the backup', self.read(SUBREDDIT, 'alice')[1])
 
         status, _, _ = self.restore(SUBREDDIT, path)
@@ -826,7 +836,7 @@ class FailureTests(CliTestCase):
     """What the tool says, and what a shell can tell from its status."""
 
     def test_reading_without_cookies_says_how_to_get_a_session(self):
-        status, out, err = self.run_cli('read', SUBREDDIT, 'alice')
+        status, out, err = self.run_cli('read', SUBREDDIT, 'alice', cookies='')
         self.assertEqual(status, EXIT_ERROR)
         self.assertEqual(out, '')
         self.assertIn('moderator-only', err)
@@ -841,15 +851,15 @@ class FailureTests(CliTestCase):
         self.assertNotIn('hint:', err)
 
     def test_a_cookie_file_that_cannot_be_read(self):
-        status, _, err = self.run_cli('read', SUBREDDIT, 'alice', '--cookies',
-                                      os.path.join(self.directory, 'missing.txt'))
+        status, _, err = self.run_cli('read', SUBREDDIT, 'alice',
+                                     cookies=os.path.join(self.directory, 'missing.txt'))
         self.assertEqual(status, EXIT_ERROR)
         self.assertIn('could not load the browser cookies', err)
         self.assertIn('--cookies FILE', err)
 
     def test_cookies_for_another_site_are_reported_before_the_request(self):
         path = self.write_cookies('reddit_session=abc', host='example.com')
-        status, _, err = self.run_cli('read', SUBREDDIT, 'alice', '--cookies', path)
+        status, _, err = self.run_cli('read', SUBREDDIT, 'alice', cookies=path)
         self.assertEqual(status, EXIT_ERROR)
         self.assertIn('none of the cookies that were loaded apply to', err)
 
@@ -869,15 +879,13 @@ class FailureTests(CliTestCase):
 
     def test_quiet_hides_the_warnings_but_not_the_listing(self):
         self.reddit.pages[('test', 'usernotes')] = notes_page(users={'alice': 'oops'})
-        status, out, err = self.run_cli('-q', 'read', SUBREDDIT, 'alice',
-                                        '--cookies', self.cookies)
+        status, out, err = self.run_cli('-q', 'read', SUBREDDIT, 'alice')
         self.assertEqual(status, EXIT_OK)
         self.assertIn('no notes for /u/alice', out)
         self.assertEqual(err, '')
 
     def test_verbose_shows_the_requests_without_ever_showing_the_cookies(self):
-        status, out, err = self.run_cli('-vv', 'read', SUBREDDIT, 'alice',
-                                        '--cookies', self.cookies)
+        status, out, err = self.run_cli('-vv', 'read', SUBREDDIT, 'alice')
         self.assertEqual(status, EXIT_OK)
         self.assertIn('GET', err)
         self.assertIn(f'/r/{SUBREDDIT}/wiki/usernotes.json', err)
@@ -909,8 +917,8 @@ class UsageTests(CliTestCase):
                       self.usage_error('read', SUBREDDIT, 'not a username!'))
 
     def test_a_browser_specification_that_is_not_one(self):
-        message = self.usage_error('read', SUBREDDIT, 'alice',
-                                   '--cookies-from-browser', 'netscape')
+        message = self.usage_error('--cookies-from-browser', 'netscape',
+                                   'read', SUBREDDIT, 'alice')
         self.assertIn('unsupported browser', message)
         self.assertIn('firefox', message)
 
@@ -944,8 +952,30 @@ class HelpTests(CliTestCase):
         for command in ('read', 'add', 'flags', 'search', 'remove', 'backup',
                         'restore'):
             self.assertIn(command, text)
-        self.assertIn('--cookies-from-browser', text)
         self.assertIn('--verbose', text)
+
+    def test_the_connection_options_are_global(self):
+        # Every command needs a session, so the options that give it one are
+        # global, like -v and -q: they are documented once, at the top level,
+        # and no command's help repeats them.
+        documented = ('take the reddit session cookies from a browser',
+                      'take the reddit session cookies from a Netscape',
+                      'the reddit origin to talk to')
+        top = self.output('--help')
+        for text in documented:
+            self.assertIn(text, top)
+            for command in ('read', 'add', 'flags', 'search', 'remove', 'backup',
+                            'restore'):
+                with self.subTest(text=text, command=command):
+                    self.assertNotIn(text, self.output(command, '--help'))
+
+    def test_the_cookie_options_go_before_the_command(self):
+        # Which is the point of moving them: after the command they are not
+        # arguments at all any more, and nothing is sent to reddit.
+        message = self.usage_error('read', SUBREDDIT, 'alice', '--cookies',
+                                   os.path.join(self.directory, 'notes.txt'))
+        self.assertIn('unrecognized arguments', message)
+        self.assertEqual(self.reddit.requests, [])
 
     def test_the_version(self):
         self.assertIn(__version__, self.output('--version'))
@@ -956,7 +986,6 @@ class HelpTests(CliTestCase):
         self.assertIn('USERNAME', text)
         self.assertIn('--json', text)
         self.assertIn('--local', text)
-        self.assertIn('--cookies', text)
 
     def test_the_help_for_adding(self):
         text = self.output('add', '--help')
@@ -965,7 +994,6 @@ class HelpTests(CliTestCase):
         self.assertIn('TEXT', text)
         self.assertIn('--flag', text)
         self.assertIn('--link', text)
-        self.assertIn('--cookies-from-browser', text)
         # How to find out what a flag can be, from the help itself.
         self.assertIn('usernotes flags', text)
 

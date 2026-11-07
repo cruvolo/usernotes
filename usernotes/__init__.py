@@ -53,7 +53,7 @@ and put such a file back.
 
 A first look at a subreddit's notes, from a shell and from python::
 
-    $ usernotes read toolbox alice --cookies-from-browser firefox
+    $ usernotes --cookies-from-browser firefox read toolbox alice
     $ usernotes add toolbox alice "banned for abuse" --flag ban
     $ usernotes search toolbox spam
     $ usernotes backup toolbox --directory ~/usernotes-backups

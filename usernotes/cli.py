@@ -41,6 +41,11 @@ Four things are worth knowing before reading the code:
   whose usernotes page is public - and toolbox's are moderator-only.
   Extraction happens before the first request, and a jar is never printed or
   logged, only the *names* of the cookies that were found.
+
+  They are global options, with ``--base-url``, because every command reads or
+  writes the same wiki page and so every command needs them: they are given
+  before the command - ``usernotes --cookies FILE read toolbox alice`` - and
+  a command's own options never collide with them.
 * **Exit statuses are the interface for scripts.**  ``0`` for a listing that
   was printed, a note that was written or a file that was backed up or
   restored; ``1`` for a request that failed, a store that could not be read, a
@@ -390,10 +395,11 @@ def build_parser():
         prog=PROG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            'Read and add to the notes the reddit Moderator Toolbox keeps for a\n'
-            'subreddit.  The notes live on the subreddit\'s wiki page, and only its\n'
-            'moderators may read or write them, so a session is usually needed: give\n'
-            'one with --cookies-from-browser or --cookies.'),
+            'Read, edit and back up the notes the reddit Moderator Toolbox keeps\n'
+            'for a subreddit.  The notes live on the subreddit\'s wiki page, and\n'
+            'only its moderators may read or write them, so a session is usually\n'
+            'needed: give one with --cookies-from-browser or --cookies, before the\n'
+            'command.'),
         epilog=(
             'usernotes is a companion to the toolbox extension, not a replacement\n'
             'for it: it reads and writes the same wiki page, and changes made there\n'
@@ -406,6 +412,7 @@ def build_parser():
                                 'every request')
     verbosity.add_argument('-q', '--quiet', action='store_true',
                            help='log errors only')
+    _connection_options(parser)
 
     commands = parser.add_subparsers(dest='command', metavar='COMMAND', required=True)
     _read_command(commands)
@@ -429,11 +436,10 @@ def _read_command(commands):
             'the note itself, and the link it is about.'),
         epilog=(
             'examples:\n'
-            '  usernotes read toolbox alice --cookies-from-browser firefox\n'
-            '  usernotes read r/toolbox u/alice --cookies cookies.txt\n'
+            '  usernotes --cookies-from-browser firefox read toolbox alice\n'
+            '  usernotes --cookies cookies.txt read r/toolbox u/alice\n'
             '  usernotes read toolbox alice --json | jq .notes\n'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        parents=[_connection_options()])
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     _subject_arguments(parser)
     _output_arguments(parser, times=True)
     parser.set_defaults(run=read)
@@ -450,8 +456,8 @@ def _add_command(commands):
             'the flag it was stored with and the moderator it was recorded against.'),
         epilog=(
             'examples:\n'
-            '  usernotes add toolbox alice "spam watch, third time this week" \\\n'
-            '      --flag spamwatch --cookies-from-browser firefox\n'
+            '  usernotes --cookies-from-browser firefox add toolbox alice \\\n'
+            '      "spam watch, third time this week" --flag spamwatch\n'
             '  usernotes add toolbox alice "banned for abuse" --flag ban \\\n'
             '      --link https://www.reddit.com/r/toolbox/comments/abc123/\n'
             '  usernotes flags toolbox            # what --flag can be\n'
@@ -459,8 +465,7 @@ def _add_command(commands):
             'Without --flag the note keeps the flag of the user\'s most recent\n'
             'flagged note, so an established flag does not have to be typed out\n'
             'again every time; --flag none writes a note with no flag at all.'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        parents=[_connection_options()])
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     _subject_arguments(parser)
     parser.add_argument('text', metavar='TEXT', type=_note_text,
                         help='the note itself, in quotes if it has spaces')
@@ -487,10 +492,9 @@ def _flags_command(commands):
             'and the key that `usernotes add --flag` accepts.'),
         epilog=(
             'examples:\n'
-            '  usernotes flags toolbox --cookies-from-browser firefox\n'
+            '  usernotes --cookies-from-browser firefox flags toolbox\n'
             '  usernotes flags toolbox --json | jq -r \'.flags[].key\'\n'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        parents=[_connection_options()])
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     _subreddit_argument(parser)
     _output_arguments(parser, times=False, json_help=(
         'print the flags as JSON instead of the listing, for scripts: '
@@ -512,12 +516,11 @@ def _search_command(commands):
             'makes PATTERN a regular expression instead of a substring.'),
         epilog=(
             'examples:\n'
-            '  usernotes search toolbox spam --cookies-from-browser firefox\n'
+            '  usernotes --cookies-from-browser firefox search toolbox spam\n'
             '  usernotes search toolbox "^spam watch" --regex\n'
             '  usernotes search toolbox 2026-11-04        # notes from that day\n'
             '  usernotes search toolbox alice --json | jq -r \'.matches[].type\'\n'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        parents=[_connection_options()])
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     _subreddit_argument(parser)
     parser.add_argument('pattern', metavar='PATTERN', type=_pattern,
                         help='what to look for: a substring, or a regular '
@@ -548,15 +551,14 @@ def _remove_command(commands):
             'there, or with `usernotes restore` from a backup.'),
         epilog=(
             'examples:\n'
-            '  usernotes remove toolbox alice --newest --cookies-from-browser firefox\n'
-            '  usernotes remove toolbox alice --oldest --cookies cookies.txt\n'
+            '  usernotes --cookies-from-browser firefox remove toolbox alice --newest\n'
+            '  usernotes --cookies cookies.txt remove toolbox alice --oldest\n'
             '  usernotes remove toolbox alice --timestamp "2026-11-05 06:11:20 UTC"\n'
             '\n'
             '--timestamp takes a time as `usernotes read` prints it, so one can be\n'
             'copied out of the middle of a listing - "3 days ago (2026-11-05\n'
             '06:11:20 UTC)" - and name the note it belongs to.'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        parents=[_connection_options()])
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     _subject_arguments(parser)
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument('--newest', action='store_true',
@@ -585,11 +587,10 @@ def _backup_command(commands):
             'writes back.'),
         epilog=(
             'examples:\n'
-            '  usernotes backup toolbox --cookies-from-browser firefox\n'
+            '  usernotes --cookies-from-browser firefox backup toolbox\n'
             '  usernotes backup toolbox --directory ~/usernotes-backups\n'
             '  usernotes backup toolbox --output before-the-cleanup.json\n'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        parents=[_connection_options()])
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     _subreddit_argument(parser)
     where = parser.add_mutually_exclusive_group()
     where.add_argument('-o', '--output', metavar='FILE', default=None,
@@ -620,11 +621,10 @@ def _restore_command(commands):
             '`usernotes backup` first if the notes as they stand are worth keeping.'),
         epilog=(
             'examples:\n'
-            '  usernotes restore toolbox usernotes_toolbox_20261107T061743Z.json \\\n'
-            '      --cookies-from-browser firefox\n'
+            '  usernotes --cookies-from-browser firefox restore toolbox \\\n'
+            '      usernotes_toolbox_20261107T061743Z.json\n'
             '  usernotes restore toolbox backup.json --dry-run   # look first\n'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        parents=[_connection_options()])
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     _subreddit_argument(parser)
     parser.add_argument('path', metavar='FILE', type=_readable_file,
                         help='the file to restore, as `usernotes backup` wrote it')
@@ -674,14 +674,18 @@ def _output_arguments(parser, *, times, json_help=(
                                  'than UTC')
 
 
-def _connection_options():
-    """The options every command needs to reach reddit, as a parent parser.
+def _connection_options(parser):
+    """Add the options that say how to reach reddit, to the top level parser.
 
-    Shared rather than repeated so that the commands to come read them the same
-    way, and so that argparse rejects a bad browser specification or subreddit
-    before anything is sent.
+    These are global, like ``-v`` and ``-q``: every command reads or writes
+    the subreddit's wiki page, so every command needs a session, and there is
+    no command that would not take them.  Passing them before the command
+    says so, and saves repeating them in each command's help.
+
+    A bad browser specification is rejected here, while the arguments are
+    being read, so that it is a usage error rather than a failure halfway
+    through a request.
     """
-    parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
         '--cookies-from-browser', metavar=BROWSER_SPEC_METAVAR,
         type=_checked(parse_browser_spec), default=None,
@@ -695,7 +699,6 @@ def _connection_options():
         '--base-url', metavar='URL', default=DEFAULT_BASE_URL,
         help=f'the reddit origin to talk to (default: {DEFAULT_BASE_URL}; '
              'https://old.reddit.com works too)')
-    return parser
 
 
 # -- helpers -----------------------------------------------------------------

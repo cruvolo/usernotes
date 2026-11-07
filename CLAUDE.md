@@ -157,7 +157,10 @@ done:
     that is not a usernotes page unless `--force`, and takes `--dry-run`
 
 All of them take `--cookies-from-browser` / `--cookies FILE` for a session, and
-`--json` for scripts.
+`--json` for scripts.  The session options - those two and `--base-url` - are
+global, like `-v` and `-q`: every command reads or writes the same wiki page
+and so every command needs them, and they are given before the command rather
+than after it (`usernotes --cookies FILE read toolbox alice`).
 
 `usernotes read`, `add`, `backup` and `restore` have been run against a real
 subreddit's notes, using Firefox cookies, and both work.  Nothing else here
