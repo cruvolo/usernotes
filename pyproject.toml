@@ -12,6 +12,9 @@ dynamic = ["version"]
 # optional speed-up, so there is nothing to install for the basic cases.
 dependencies = []
 
+[project.scripts]
+usernotes = "usernotes.cli:main"
+
 [project.optional-dependencies]
 # Reading Chromium cookies from the GNOME keyring (Linux) needs D-Bus access to
 # the keyring; KWallet is read by shelling out to kwallet-query instead, and
