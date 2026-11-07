@@ -129,7 +129,7 @@ _NO_FLAG = ('none', '-')
 #: listens for it), so a jar without it cannot make an authenticated request -
 #: which is worth saying before the request goes out, because reddit answers it
 #: with a bare 403 that looks like a permissions problem.
-SESSION_COOKIE = 'reddit_session'
+_SESSION_COOKIE = 'reddit_session'
 
 #: The shapes of link that survive a save: the squashed ``l,<id>`` an older
 #: store holds, and anything `usernotes.format.squash_link` can reduce.  A link
@@ -741,9 +741,9 @@ def _load_cookies(args, logger, base_url):
     if not names:
         logger.warning(f'none of the cookies that were loaded apply to {base_url}; '
                        'the request will be anonymous')
-    elif SESSION_COOKIE not in names:
+    elif _SESSION_COOKIE not in names:
         logger.warning(
-            f'the cookies loaded for {base_url} do not include {SESSION_COOKIE} '
+            f'the cookies loaded for {base_url} do not include {_SESSION_COOKIE} '
             f'(found: {", ".join(names)}), so the request will be anonymous; a '
             'chromium store that could only be partly decrypted looks like '
             'this, and needs the browser named with its keyring - '
