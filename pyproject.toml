@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "usernotes"
+description = "Command line tools for the reddit Moderator Toolbox usernotes store"
+requires-python = ">=3.11"
+dynamic = ["version"]
+# The runtime is the standard library.  `usernotes.cookies` decrypts Chromium
+# cookie values with its own pure-python AES, using pycryptodome only as an
+# optional speed-up, so there is nothing to install for the basic cases.
+dependencies = []
+
+[project.optional-dependencies]
+# Reading Chromium cookies from the GNOME keyring (Linux) needs D-Bus access to
+# the keyring; KWallet is read by shelling out to kwallet-query instead, and
+# macOS/Windows use their own platform mechanisms, so neither needs this.
+gnome-keyring = ["secretstorage>=3.3"]
+
+[tool.setuptools]
+packages = ["usernotes", "usernotes._vendor"]
+
+[tool.setuptools.dynamic]
+version = {attr = "usernotes.__version__"}
