@@ -15,9 +15,11 @@ The whole set is implemented: `usernotes read`, `add`, `flags`, `search`,
 ## Requirements
 
 * Python 3.11 or newer.
-* No third-party runtime libraries - the standard library is all that is
-  needed.  Reading Chromium cookies from the GNOME keyring on Linux is the one
-  optional extra: `python3 -m pip install ".[gnome-keyring]"`.
+* No third-party runtime libraries on Windows or macOS - the standard library
+  is all that is needed.  On Linux, `secretstorage` is installed with the
+  package: it is what reads a Chromium cookie store's key out of the desktop
+  keyring over D-Bus, and without it those cookies cannot be decrypted.  It
+  comes with `cryptography` and `jeepney` of its own.
 * A reddit account that moderates the subreddit, unless its usernotes page has
   been left publicly readable.
 
@@ -331,13 +333,12 @@ of the cookies it found.
 
 A Chromium-family browser on Linux encrypts what it stores with a key held in
 the desktop keyring, and which keyring that is has to be guessed from the
-desktop environment - so on a desktop it does not recognise the guess can be
-wrong, the reddit session cookie goes missing, and every request is anonymous.
-The tool says so before it makes one, and naming the keyring settles it:
-`usernotes --cookies-from-browser chromium+gnomekeyring ...`.  Reading the GNOME
-keyring needs the optional extra from [Build and install](#build-and-install)
-above; a store with no keyring-encrypted cookies in it is read without any
-keyring access at all.
+desktop environment - so on a desktop it does not recognise, the guess can be
+wrong and the reddit session cookie goes missing, leaving every request
+anonymous.  The tool says so before it makes one, and naming the keyring settles
+it: `usernotes --cookies-from-browser chromium+gnomekeyring ...`.  A store with
+no keyring-encrypted cookies in it is read without any keyring access at all,
+and a keyring that cannot be read costs only those cookies, not the store.
 
 ### Exit status
 

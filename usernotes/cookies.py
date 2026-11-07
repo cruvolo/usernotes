@@ -87,8 +87,10 @@ Cross-platform notes
   in the desktop keyring (GNOME keyring, KWallet, or Chrome's ``basic`` store).
   Reading it may prompt for keychain access on macOS and fail on a locked
   keyring on Linux; the CLI should point the user at ``--cookies FILE`` as an
-  alternative.  GNOME keyring support needs the optional ``secretstorage``
-  package.
+  alternative.  On Linux the keyring is read over D-Bus through
+  ``secretstorage``, which is a dependency of this package there; without it
+  the keyring-encrypted cookies are reported as undecryptable and the rest of
+  the store is still read.
 * On Windows, DPAPI decryption only works when running as the same user account
   as the browser.
 * Firefox needs no decryption anywhere, and is the most reliable source.

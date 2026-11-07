@@ -161,9 +161,11 @@ the browser encrypted with a key it keeps in the keyring - are dropped.
   extraction, and only when a `v11` cookie needs it - a store that has none,
   which is what a basic-text browser writes, never touches the keyring at all.
   An explicit `+keyring` is obeyed rather than second-guessed.
-* Reading the secret service needs the optional `secretstorage` package
-  (`pip install 'usernotes[gnome-keyring]'`). Without it a `v11` cookie is
-  reported as undecryptable, with the reason, and `--cookies FILE` still works.
+* Reading the secret service is what `secretstorage` is for, and on Linux it is
+  a dependency of this package (`secretstorage>=3.3; sys_platform == 'linux'`,
+  which brings `cryptography` and `jeepney` with it). Without it a `v11` cookie
+  is reported as undecryptable, with the reason, and `--cookies FILE` still
+  works.
 * Three things about *how* the item is read are `usernotes`' own, all of them
   because a keyring that cannot be read is a store whose `v11` cookies cannot
   be decrypted - not a store that cannot be read at all:
@@ -236,12 +238,15 @@ local equivalents. The external surface is small:
   `error_to_str`;
 * `MultilinePrinter`/`QuietMultilinePrinter` for the progress bar — a no-op stub is
   fine;
-* optional `secretstorage`; stdlib `sqlite3`.
+* `secretstorage`; stdlib `sqlite3`.
 
-The only real third-party dependency is `secretstorage`, and only for GNOME-keyring
-Chromium cookies on Linux. Vendoring keeps our install footprint to "standard
-python3 plus one optional package" and lets us trim progress-bar noise. The cost is
-maintaining the decryption and browser-location tables ourselves as browsers change.
+`secretstorage` is the one third-party dependency, and only Linux needs it: it is
+what reads a Chromium store's key out of the desktop keyring, and without it that
+store's `v11` cookies - the reddit session among them - cannot be decrypted, so
+it is declared as a dependency rather than left as an extra to discover. Vendoring
+keeps the install footprint to "standard python3 plus that" and lets us trim
+progress-bar noise. The cost is maintaining the decryption and browser-location
+tables ourselves as browsers change.
 
 **Recommendation for this project:** vendor `cookies.py`/`aes.py` behind a small
 `usernotes.cookies` facade exposing just what we need — `load_cookie_header(url)`
