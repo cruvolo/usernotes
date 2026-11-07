@@ -135,7 +135,8 @@ with no flag at all.
 
 `--link` is what the note is about: an absolute URL, or a path such as
 `/r/toolbox/comments/abc123/`.  It is stored the way toolbox stores a link, so
-it comes back as a clickable URL in the listing.
+it comes back as a clickable URL in the listing.  `--url` is the same option,
+for when the thing it names is a URL; give either one.
 
 The note is recorded against the account whose cookies were used, and the whole
 wiki page is rewritten, because the format has no smaller unit.  If another
@@ -297,7 +298,7 @@ alice` - and the rest go after it, where the command's own `--help` lists them.
 | `--cookies FILE` | global | Take them from a Netscape `cookies.txt` instead, for when the browser's store cannot be read.  Both may be given; the file wins. |
 | `--base-url URL` | global | The reddit origin to talk to; `https://old.reddit.com` works too. |
 | `--flag FLAG` | `add` | The flag to set, by name or key as `usernotes flags SUBREDDIT` lists it.  Defaults to the flag on the user's most recent flagged note; `none` sets no flag. |
-| `--link URL` | `add` | What the note is about: an absolute URL, or a path such as `/r/toolbox/comments/abc123/`. |
+| `--link URL`, `--url URL` | `add` | What the note is about: an absolute URL, or a path such as `/r/toolbox/comments/abc123/`. |
 | `-E`, `--regex` | `search` | Read PATTERN as a regular expression, matched anywhere in a field. |
 | `--case-sensitive` | `search` | Match case, where the default ignores it. |
 | `--newest` / `--oldest` | `remove` | Delete the user's newest, or oldest, note. |

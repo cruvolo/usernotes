@@ -335,7 +335,7 @@ def _note_text(value):
 
 
 def _link(value):
-    """An argparse ``type`` for ``--link``, checked before anything is sent.
+    """An argparse ``type`` for ``--link`` and ``--url``, checked before a request.
 
     Only link shapes the storage format keeps are accepted: an absolute URL, a
     reddit path, or the squashed ``l,<id>`` an older store holds.  Anything
@@ -485,7 +485,7 @@ def _add_command(commands):
                         help="the flag to set, by name or key as `usernotes flags "
                              "SUBREDDIT` lists it; defaults to the user's most "
                              "recent flag, and 'none' sets no flag")
-    parser.add_argument('--link', metavar='URL', type=_link, default='',
+    parser.add_argument('--link', '--url', metavar='URL', type=_link, default='',
                         help='what the note is about: an absolute URL, or a path '
                              'such as /r/toolbox/comments/abc123/')
     _output_arguments(parser, times=True)

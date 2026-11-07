@@ -136,9 +136,9 @@ done:
   * `usernotes read SUBREDDIT USERNAME` prints one user's notes the way
     toolbox's "User Notes" dialog shows them
   * `usernotes add SUBREDDIT USERNAME TEXT` writes a note - with `--flag` for
-    the note type, `--link` for what it is about - and prints those notes
-    again, read back from the wiki.  Without `--flag` the note keeps the flag
-    of the user's most recent flagged note; `--flag none` sets none.
+    the note type, `--link` (or `--url`) for what it is about - and prints those
+    notes again, read back from the wiki.  Without `--flag` the note keeps the
+    flag of the user's most recent flagged note; `--flag none` sets none.
   * `usernotes flags SUBREDDIT` lists the flags the subreddit defines, which
     is how a moderator finds out what `--flag` accepts
   * `usernotes search SUBREDDIT PATTERN` prints every note whose user, text,

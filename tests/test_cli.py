@@ -396,10 +396,24 @@ class AddTests(CliTestCase):
         note = fmt.decompress_blob(stored['blob'])['alice']['ns'][0]
         self.assertEqual(note['l'], 'l,abc123')
 
+    def test_url_names_the_same_option_as_link(self):
+        # `--url` is `--link` by another name, so it writes the same note field
+        # and goes through the same check on what a link can be.
+        link = f'{self.reddit.base_url}/r/test/comments/def456/'
+        status, out, _ = self.add(SUBREDDIT, 'alice', 'about that comment',
+                                  '--flag', 'ban', '--url', link)
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn(link, out)
+        stored = json.loads(self.reddit.page(SUBREDDIT))
+        note = fmt.decompress_blob(stored['blob'])['alice']['ns'][0]
+        self.assertEqual(note['l'], 'l,def456')
+
     def test_a_link_that_is_not_one_is_a_usage_error(self):
-        self.assertIn('not a reddit link',
-                      self.usage_error('add', SUBREDDIT, 'alice', 'a note',
-                                       '--link', 'somewhere over there'))
+        for name in ('--link', '--url'):
+            with self.subTest(option=name):
+                self.assertIn('not a reddit link',
+                              self.usage_error('add', SUBREDDIT, 'alice', 'a note',
+                                               name, 'somewhere over there'))
 
     def test_the_note_may_not_be_empty(self):
         self.assertIn('the note is empty',
@@ -1006,7 +1020,9 @@ class HelpTests(CliTestCase):
         self.assertIn('USERNAME', text)
         self.assertIn('TEXT', text)
         self.assertIn('--flag', text)
+        # The link option, under both of its names.
         self.assertIn('--link', text)
+        self.assertIn('--url', text)
         # How to find out what a flag can be, from the help itself.
         self.assertIn('usernotes flags', text)
 
