@@ -33,24 +33,29 @@ Modules:
 `usernotes.display`
     Turning one user's notes into the text a terminal is shown, coloured the
     way toolbox colours them in the browser.
+`usernotes.search`
+    Finding the notes a search key matches, by user, text, flag or time.
 
 Cookies are always a parameter, never something this package fetches on its
 own: pass whatever `usernotes.cookies.load_cookie_jar` returns to
 ``UsernotesStore(cookies=...)``.  `usernotes.cli` is the one place that goes
 and gets them, from ``--cookies-from-browser`` or ``--cookies FILE``.
 
-The commands implemented so far are ``usernotes read SUBREDDIT USERNAME``,
-which prints one user's notes; ``usernotes add SUBREDDIT USERNAME TEXT``, which
-writes a note and prints those notes again, read back from the wiki;
-``usernotes flags SUBREDDIT``, which lists the note types - the flags - the
-subreddit defines; and ``usernotes backup SUBREDDIT`` / ``usernotes restore
-SUBREDDIT FILE``, which write the whole wiki page to a file and put such a file
-back.  ``search`` is a matter of one more command in `usernotes.cli`.
+The commands are ``usernotes read SUBREDDIT USERNAME``, which prints one user's
+notes; ``usernotes add SUBREDDIT USERNAME TEXT``, which writes a note and prints
+those notes again, read back from the wiki; ``usernotes flags SUBREDDIT``, which
+lists the note types - the flags - the subreddit defines; ``usernotes search
+SUBREDDIT PATTERN``, which finds notes by user, text, flag or time; ``usernotes
+remove SUBREDDIT USERNAME``, which takes one note away again by ``--newest``,
+``--oldest`` or ``--timestamp``; and ``usernotes backup SUBREDDIT`` /
+``usernotes restore SUBREDDIT FILE``, which write the whole wiki page to a file
+and put such a file back.
 
 A first look at a subreddit's notes, from a shell and from python::
 
     $ usernotes read toolbox alice --cookies-from-browser firefox
     $ usernotes add toolbox alice "banned for abuse" --flag ban
+    $ usernotes search toolbox spam
     $ usernotes backup toolbox --directory ~/usernotes-backups
 
     from usernotes import cookies

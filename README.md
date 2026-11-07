@@ -9,10 +9,8 @@ encoded JSON, and this package reads, edits and backs that store up outside a
 browser.  It works on the same wiki page toolbox does, so a note added on
 either side shows up in both.
 
-Reading, adding, backing up and restoring are implemented: `usernotes read`,
-`usernotes add`, `usernotes flags`, `usernotes backup` and `usernotes restore`.
-Searching is still to come; the library underneath it (`usernotes.store`)
-already does the work.
+The whole set is implemented: `usernotes read`, `add`, `flags`, `search`,
+`remove`, `backup` and `restore`.
 
 ## Requirements
 
@@ -57,6 +55,8 @@ usernotes [-v|-q] COMMAND [options] ...
 | `usernotes read SUBREDDIT USERNAME` | Print a user's notes. |
 | `usernotes add SUBREDDIT USERNAME TEXT` | Add a note, then print their notes again. |
 | `usernotes flags SUBREDDIT` | List the flags a note can carry. |
+| `usernotes search SUBREDDIT PATTERN` | Find notes by user, text, flag or time. |
+| `usernotes remove SUBREDDIT USERNAME` | Delete one of a user's notes. |
 | `usernotes backup SUBREDDIT` | Save the whole usernotes page to a file. |
 | `usernotes restore SUBREDDIT FILE` | Put such a file back as a new wiki revision. |
 
@@ -159,6 +159,73 @@ Bot Ban           botban
 An `add` with a flag the subreddit does not define fails with that list in the
 message, so a typo is caught before anything is written.
 
+### Searching
+
+`usernotes search` prints every note whose **user**, **text**, **flag** or
+**timestamp** matches, with the user it belongs to.  Matching is by substring,
+anywhere in a field, and ignores case - which is what toolbox's own search
+boxes do - and `--regex` reads the pattern as a regular expression instead:
+
+```sh
+usernotes search toolbox spam
+
+# a regular expression, and a case-sensitive one
+usernotes search toolbox '^spam' --regex
+usernotes search toolbox Spam --case-sensitive
+
+# notes from a day, or a flag's own name
+usernotes search toolbox 2026-11-04
+usernotes search toolbox 'Spam Watch'
+```
+
+```
+Usernotes matching 'spam' - /r/toolbox
+2 notes for 2 users
+
+User           Note
+alice          [Spam Watch] spam watch, second time - by /u/creesch - 4 days ago (2026-11-03 06:12:45 UTC)
+               https://www.reddit.com/r/toolbox/comments/abc123/
+bobthespammer  [Ban] banned for spam - by /u/othermod - 3 days ago (2026-11-04 06:11:20 UTC)
+```
+
+Nothing matching is not an error: it says so and the exit status stays 0.
+
+### Removing
+
+`usernotes remove` deletes one of a user's notes.  The note is named one of
+three ways, and exactly one has to be given:
+
+```sh
+usernotes remove toolbox alice --newest
+usernotes remove toolbox alice --oldest
+
+# the time, copied straight out of a listing: the part in brackets
+usernotes remove toolbox alice --timestamp "2026-11-05 06:11:20 UTC"
+```
+
+`--timestamp` takes a time as `usernotes read` (or `search`) prints it, so the
+whole workflow is: read the notes, copy `2026-11-05 06:11:20 UTC` out of the
+middle of `3 days ago (2026-11-05 06:11:20 UTC)`, and name that note with it.
+A time with no zone is UTC, and the ISO 8601 spellings work too.  A note's
+timestamp is its identity - it is what toolbox itself identifies a note by - so
+the time names one note exactly; if a paste matches nothing, the error lists the
+times the user does have, in that same form.
+
+The note is written out of the page as a new revision, and the user's remaining
+notes are printed afterwards, read back from the wiki:
+
+```
+[Spam Watch] spam watch, second time - by /u/creesch - 4 days ago (2026-11-03 06:12:45 UTC)
+
+User Notes - /u/alice
+/r/toolbox - 1 note
+...
+```
+
+Reddit keeps the page's revision history, so a removal can be undone there, or
+with `usernotes restore` from a backup.  A user whose last note goes is dropped
+from the store, as toolbox drops them.
+
 ### Backing up
 
 `usernotes backup` writes the whole page to a file, exactly as reddit returns
@@ -223,13 +290,17 @@ page, not a name.
 | `--base-url URL` | all | The reddit origin to talk to; `https://old.reddit.com` works too. |
 | `--flag FLAG` | `add` | The flag to set, by name or key as `usernotes flags SUBREDDIT` lists it.  Defaults to the flag on the user's most recent flagged note; `none` sets no flag. |
 | `--link URL` | `add` | What the note is about: an absolute URL, or a path such as `/r/toolbox/comments/abc123/`. |
+| `-E`, `--regex` | `search` | Read PATTERN as a regular expression, matched anywhere in a field. |
+| `--case-sensitive` | `search` | Match case, where the default ignores it. |
+| `--newest` / `--oldest` | `remove` | Delete the user's newest, or oldest, note. |
+| `--timestamp TIME` | `remove` | Delete the note written at this time, as `usernotes read` prints it, e.g. `"2026-11-05 06:11:20 UTC"`. |
 | `-o FILE`, `--output FILE` | `backup` | The file to write; the default is `usernotes_<subreddit>_<UTC timestamp>.json` in the current directory. |
 | `-d DIR`, `--directory DIR` | `backup` | Where to put that generated filename; created if it does not exist. |
 | `--force` | `restore` | Restore a file that does not decode as a usernotes page. |
 | `--dry-run` | `restore` | Say what would be written, and write nothing. |
-| `--json` | all | Print one JSON document instead of the listing.  For `read` and `add`: `subreddit`, `page`, `schema`, `exists`, `name`, `aliases`, `notes[]` (`text`, `time`, `time_iso`, `mod`, `type`, `link`) and `warnings[]`.  For `flags`: `subreddit` and `flags[]` (`key`, `text`, `color`).  For `backup`: `path`, `subreddit`, `taken_at`, `size`, `notes`, `users` and `warnings`.  For `restore`: `path`, `subreddit`, `schema`, `size`, `notes`, `users`, `replaced_notes`, `replaced_users`, `written`, `dry_run` and `warnings`. |
+| `--json` | all | Print one JSON document instead of the listing.  For `read` and `add`: `subreddit`, `page`, `schema`, `exists`, `name`, `aliases`, `notes[]` (`text`, `time`, `time_iso`, `mod`, `type`, `link`) and `warnings[]`.  For `flags`: `subreddit` and `flags[]` (`key`, `text`, `color`).  For `search`: `subreddit`, `pattern`, `regex`, `count` and `matches[]` (each a note with a `user`).  For `remove`: the `read` document plus the note that went, under `removed`.  For `backup`: `path`, `subreddit`, `taken_at`, `size`, `notes`, `users` and `warnings`.  For `restore`: `path`, `subreddit`, `schema`, `size`, `notes`, `users`, `replaced_notes`, `replaced_users`, `written`, `dry_run` and `warnings`. |
 | `--color WHEN` | all | `auto` (default: colour when stdout is a terminal), `always`, `never`. |
-| `--local` | `read`, `add` | Show note times in the local time zone instead of UTC. |
+| `--local` | `read`, `add`, `search`, `remove` | Show note times in the local time zone instead of UTC. |
 | `-v` / `-q` | all | More or less logging on stderr: `-v` for what is happening, `-vv` for every request, `-q` for errors only. |
 
 ### Cookies
@@ -250,8 +321,8 @@ of the cookies it found.
 
 | Status | Meaning |
 |---|---|
-| `0` | A listing was printed - an empty one counts - a note was written, or a file was backed up or restored. |
-| `1` | Reddit refused, or a store or file could not be read or written (bad cookies, not a moderator, the page is not usernotes, a flag that does not exist, the page changed while the note was being added, a file that is not a usernotes page, ...). |
+| `0` | A listing was printed, a search ran (nothing matching counts), a note was written or deleted, or a file was backed up or restored. |
+| `1` | Reddit refused, or a store or file could not be read or written (bad cookies, not a moderator, the page is not usernotes, a flag that does not exist, a note with that timestamp, a pattern that is not a regular expression, the page changed while the note was being added, a file that is not a usernotes page, ...). |
 | `2` | A usage error, reported by the argument parser before anything is sent. |
 
 ## Development

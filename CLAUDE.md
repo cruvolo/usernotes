@@ -62,11 +62,14 @@ You may take code from both these projects to use within this project as needed.
    subreddit's usernotes.
 
 4. Create a command line interface to search through a subreddit's usernotes
-   for matching entries and display the notes.
+   for matching entries and display matching notes.  Search can be by substring
+   or regular expression.  Match the search key against the following fields:
+   username, message, flag, ISO UTC timestamp (rendered to a string).  If any
+   fields match, output that note for that user.
 
 5. Create a command line interface to remove a usernote for a user in a
-   subreddit.  The usernote to remove may be identified by any of the
-   following: `--newest` option, `--oldest` option, --timestamp "<ISO UTC
+   subreddit.  The usernote to remove may be identified by any of the following
+   new options: `--newest` option, `--oldest` option, --timestamp "<ISO UTC
    time>" (able to be copy/pasted from the `usernote read` output).
 
 ## Repository layout:
@@ -89,6 +92,8 @@ Within `usernotes/`:
     usernotes`): arguments, cookies, exit statuses
   * `display.py` -- turning one user's notes into terminal text, with the
     colours toolbox uses
+  * `search.py` -- matching a search key against a note's user, text, flag and
+    timestamp
 
 Cookies are always a parameter: nothing in *this library* fetches them by
 itself.  `cli.py` is the one place that does, on the user's behalf, from
@@ -123,9 +128,9 @@ user know.
 
 ## Current state
 
-The library is in place: reading, editing, saving and backing up usernotes
-all work against reddit's wiki API, with tests that never touch reddit (a
-throwaway HTTP server on 127.0.0.1 stands in for it).  Goals 1, 2 and 3 are
+The library is in place: reading, editing, saving, backing up and restoring
+usernotes all work against reddit's wiki API, with tests that never touch
+reddit (a throwaway HTTP server on 127.0.0.1 stands in for it).  Goals 1-5 are
 done:
 
   * `usernotes read SUBREDDIT USERNAME` prints one user's notes the way
@@ -136,6 +141,14 @@ done:
     of the user's most recent flagged note; `--flag none` sets none.
   * `usernotes flags SUBREDDIT` lists the flags the subreddit defines, which
     is how a moderator finds out what `--flag` accepts
+  * `usernotes search SUBREDDIT PATTERN` prints every note whose user, text,
+    flag or timestamp matches PATTERN, each with the user it belongs to.
+    Matching is by substring, or by regular expression with `--regex`, and
+    ignores case unless `--case-sensitive`
+  * `usernotes remove SUBREDDIT USERNAME` deletes one note, named by
+    `--newest`, `--oldest` or `--timestamp`.  The timestamp is taken as
+    `usernotes read` prints it - `"2026-11-05 06:11:20 UTC"` - so a note can be
+    named by copying a time out of a listing
   * `usernotes backup SUBREDDIT` writes the whole wiki page to a file exactly
     as reddit returns it, and `usernotes restore SUBREDDIT FILE` writes such a
     file back as a new revision - also exactly, so a page this tool cannot
@@ -144,9 +157,7 @@ done:
     that is not a usernotes page unless `--force`, and takes `--dry-run`
 
 All of them take `--cookies-from-browser` / `--cookies FILE` for a session, and
-`--json` for scripts.  Goal 4 (`search`) is not written yet - the pieces it
-needs are in `usernotes.model` and `usernotes.format`, and `cli.py` is where it
-goes.
+`--json` for scripts.
 
 `usernotes read`, `add`, `backup` and `restore` have been run against a real
 subreddit's notes, using Firefox cookies, and both work.  Nothing else here
