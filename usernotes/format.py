@@ -32,12 +32,19 @@ A faithful reimplementation should be readable by toolbox and behave the way
 its users expect, but three details of toolbox's behaviour are bugs or lossy,
 so they are deliberately not copied:
 
-* **Links that are not squashed forms.**  Toolbox recognises only
-  ``l,<id>[,<id>]``, ``m,<id>`` and ``https://mod.reddit.com/...``, and
-  reduces anything else to ``""`` on read - so a store containing a legacy
-  full URL loses it on the next save.  `unsquash_link` and `squash_link` keep
-  any absolute ``http(s)`` URL as it is instead, which is what toolbox's own
-  documentation recommends for legacy stores.
+* **Links are squashed only when squashing is faithful.**  A stored link
+  carries no subreddit and no origin: whoever reads it puts back the ones
+  belonging to the store it was read from.  Toolbox squashes any permalink
+  with ``/comments/<id>`` in it, so a link to a post in *another* subreddit -
+  or to a site that merely has such a path - is written as ``l,<id>`` and
+  reads back as a post in the store's own subreddit, which is a 404; and it
+  reduces every other shape it does not recognise to ``""`` on read, so a
+  store holding a legacy full URL loses it on the next save.  `squash_link`
+  keeps a link it cannot squash faithfully as the absolute ``http(s)`` URL it
+  was given, and `unsquash_link` returns an absolute URL unchanged, so nothing
+  this package cannot express is dropped or rewritten.  Toolbox shows no link
+  behind such a note, since it reads an unrecognised ``l`` back as "no link" -
+  which beats a link that goes to the wrong place.
 * **Note text is not HTML-decoded on read.**  Toolbox runs note text through
   ``htmlDecode()`` when it reads a page and writes it back verbatim, so a note
   whose text contains a literal entity (``&amp;``) reads back as ``&`` and is
@@ -65,6 +72,7 @@ import datetime
 import html
 import json
 import re
+import urllib.parse
 import zlib
 
 from .errors import InvalidConfigError, InvalidPageError, UnsupportedSchemaError
@@ -120,10 +128,20 @@ DEFAULT_ZLIB_LEVEL = 6
 #: Toolbox decides with ``time.toString().length <= 10``.
 _MAX_SECONDS_DIGITS = 10
 
-# Link shapes toolbox squashes (`usernotes.js:1491-1543`).  The comment form is
-# deliberately loose: an optional slug may or may not carry a comment id.
-_COMMENTS_LINK_RE = re.compile(r'/comments/(\w+)/(?:[^/]+/(?:(\w+))?)?')
-_MODMAIL_LINK_RE = re.compile(r'/messages/(\w+)')
+# Link shapes toolbox squashes (`usernotes.js:1491-1543`).  Unlike toolbox's
+# loose ``search()`` patterns these match a whole path, because the squashed
+# form names neither a subreddit nor an origin: a link may only be squashed
+# when the reader can put back exactly what squashing takes away (see
+# `squash_link`).
+_PERMALINK_PATH_RE = re.compile(
+    r'/r/(?P<sub>[^/]+)/comments/(?P<post>\w+)'
+    r'(?:/[^/]+(?:/(?P<comment>\w+))?)?/?',
+    re.IGNORECASE)
+_MODMAIL_PATH_RE = re.compile(r'/r/(?P<sub>[^/]+)/message/messages/(?P<id>\w+)/?',
+                              re.IGNORECASE)
+#: The subreddit-less modmail path toolbox records from its own API, which can
+#: only mean the subreddit whose notes are being written.
+_BARE_MODMAIL_PATH_RE = re.compile(r'/message/messages/(?P<id>\w+)/?', re.IGNORECASE)
 _ABSOLUTE_URL_RE = re.compile(r'https?://', re.IGNORECASE)
 
 #: Note type keys are validated as ``^[\w-]+$`` by toolbox's config module.
@@ -387,7 +405,7 @@ def parse_page(content_md, subreddit='', *, strict=False, base_url=DEFAULT_BASE_
     return Page(ver=ver, users=users, warnings=tuple(problems))
 
 
-def build_page(users, *, ver=NOTES_SCHEMA, base_url=DEFAULT_BASE_URL):
+def build_page(users, *, ver=NOTES_SCHEMA, subreddit='', base_url=DEFAULT_BASE_URL):
     """Encode notes into the text of a usernotes wiki page.
 
     The ``constants`` pools are rebuilt from scratch, in first-seen order,
@@ -403,7 +421,10 @@ def build_page(users, *, ver=NOTES_SCHEMA, base_url=DEFAULT_BASE_URL):
         the note map into ``blob``; v5 writes it inline.  v4 and older are
         refused: writing them would mean *downgrading* a store, which toolbox
         also refuses to do.
-    :param base_url: origin used when squashing links.
+    :param subreddit: the subreddit the page belongs to.  Only links to a post
+        *on it* are squashed, so that a link to another subreddit keeps
+        pointing there; ``''`` squashes none of them (see `squash_link`).
+    :param base_url: the reddit the page lives on, used when squashing links.
     :returns: the page text, minified - toolbox writes
         ``JSON.stringify`` output and notes that "not indenting saves precious
         bytes"; the wiki page limit is why the format is compressed at all.
@@ -425,7 +446,7 @@ def build_page(users, *, ver=NOTES_SCHEMA, base_url=DEFAULT_BASE_URL):
                 'n': _as_text(note.text),
                 't': time_to_stored(ver, note.time),
                 'm': _intern(users_pool, _as_key(note.mod)),
-                'l': squash_link(note.link, base_url=base_url),
+                'l': squash_link(note.link, subreddit=subreddit, base_url=base_url),
                 'w': _intern(warnings_pool, _as_key(note.type)),
             })
         deflated[name] = {'ns': slots}
@@ -529,16 +550,33 @@ def describe_time(time):
     return moment.strftime('%Y-%m-%d %H:%M:%S UTC')
 
 
-def squash_link(permalink, *, base_url=DEFAULT_BASE_URL):
+def squash_link(permalink, *, subreddit='', base_url=DEFAULT_BASE_URL):
     """Reduce a permalink to the form stored in a note's ``l`` field.
 
-    ``/r/<sub>/comments/<id>/`` becomes ``l,<id>``, a comment link becomes
-    ``l,<id>,<id>``, an old modmail thread becomes ``m,<id>``, a new modmail
-    URL is stored whole, and anything else that is an absolute ``http(s)`` URL
-    is stored whole too (toolbox writes ``''`` there and loses it on the next
-    read; see the module docstring).
+    A permalink on *subreddit* itself - ``/r/<subreddit>/comments/<id>/`` -
+    becomes ``l,<id>``; a comment link on it becomes ``l,<id>,<id>``; and an
+    old modmail thread on it becomes ``m,<id>``.
+
+    A stored link carries no subreddit and no origin, so squashing is only
+    done when a reader can put back exactly what was taken away.  Anything
+    else is kept as the absolute ``http(s)`` URL it was given: a permalink
+    into *another* subreddit, a URL on some other site (a ``/comments/<id>``
+    path is not unique to reddit), or a link on a reddit other than
+    *base_url*.  Toolbox squashes on the shape of the path alone, so it
+    rewrites a cross-subreddit link to point at the store's own subreddit -
+    usually a 404 - and drops a URL it does not recognise on the next read;
+    see the module docstring.  (Toolbox re-squashes such a URL itself if a
+    moderator next saves from the browser, which no external tool can
+    prevent.)
 
     :param permalink: absolute URL or relative path, or ``''``/``None``.
+    :param subreddit: the subreddit the notes belong to - the subreddit a
+        squashed link reads back as, and so the only one that may be
+        squashed.  ``''`` means "unknown", and then nothing is squashed: the
+        link is kept whole, which always works, where squashing could point
+        it at the wrong subreddit.
+    :param base_url: the reddit these notes live on.  A URL on another origin
+        is kept whole, and a path-only permalink is taken to be on this one.
     :returns: the ``l`` value, ``''`` when there is no usable link.
     """
     if not permalink:
@@ -546,28 +584,67 @@ def squash_link(permalink, *, base_url=DEFAULT_BASE_URL):
     if not isinstance(permalink, str):
         raise ValueError(f'link is {type(permalink).__name__}, not text: {permalink!r}')
 
-    comments = _COMMENTS_LINK_RE.search(permalink)
-    if comments:
-        squashed = f'l,{comments.group(1)}'
-        if comments.group(2) is not None:
-            squashed += f',{comments.group(2)}'
-        return squashed
-    modmail = _MODMAIL_LINK_RE.search(permalink)
-    if modmail:
-        return f'm,{modmail.group(1)}'
     if _is_absolute_url(permalink):
-        return permalink
+        parsed = urllib.parse.urlsplit(permalink)
+        if not _same_reddit(parsed.hostname, base_url):
+            return permalink
+        # A URL that cannot be squashed faithfully is kept whole rather than
+        # reduced to something that means a different post.
+        return _squash_path(parsed.path, subreddit) or permalink
+
+    # A bare path names no origin, so it is on *base_url* - the origin a
+    # squashed link would be read back on.
+    squashed = _squash_path(permalink, subreddit)
+    if squashed:
+        return squashed
+    if base_url and permalink.startswith('/'):
+        return urllib.parse.urljoin(base_url, permalink)
+    return ''
+
+
+def _squash_path(path, subreddit):
+    """Squash one reddit permalink path, or ``''`` when it will not fit.
+
+    :param path: the path of an absolute URL, or a bare path.
+    :param subreddit: the subreddit the notes belong to.  A permalink naming
+        any other subreddit will not be squashed, because the stored form
+        names none and would read back as this one (see `squash_link`).
+    """
+    permalink = _PERMALINK_PATH_RE.fullmatch(path)
+    if permalink is not None and _names_subreddit(permalink['sub'], subreddit):
+        squashed = f'l,{permalink["post"]}'
+        if permalink['comment'] is not None:
+            squashed += f',{permalink["comment"]}'
+        return squashed
+
+    modmail = _MODMAIL_PATH_RE.fullmatch(path)
+    if modmail is not None and _names_subreddit(modmail['sub'], subreddit):
+        return f'm,{modmail["id"]}'
+
+    # Toolbox records old modmail from its own API as a subreddit-less
+    # ``/message/messages/<id>`` path, which names no subreddit to lose, and
+    # reads ``m,<id>`` back as this store's.
+    bare = _BARE_MODMAIL_PATH_RE.fullmatch(path)
+    if bare is not None:
+        return f'm,{bare["id"]}'
+
     return ''
 
 
 def unsquash_link(subreddit, link, *, base_url=DEFAULT_BASE_URL):
     """Expand a stored ``l`` field into an absolute URL.
 
+    The squashed forms name no subreddit, so *subreddit* and *base_url* are
+    what they are read back as - which is what the note meant when it was
+    written, because only links on that subreddit are squashed in the first
+    place (see `squash_link`).
+
     :param subreddit: the subreddit the notes belong to.
     :param link: the stored ``l`` value.
     :returns: an absolute URL, or ``''`` when there is nothing usable.  A
         stored value that is already an absolute URL is returned unchanged, so
-        legacy links survive a read/modify/write round trip.
+        legacy links - and the cross-subreddit links this package writes whole
+        - survive a read/modify/write round trip.
     """
     if not link or not isinstance(link, str):
         return ''
@@ -661,6 +738,42 @@ def note_type(value, types=DEFAULT_NOTE_TYPES):
 
 def _is_absolute_url(value):
     return bool(_ABSOLUTE_URL_RE.match(value))
+
+
+def _names_subreddit(name, subreddit):
+    """Whether a URL's subreddit is the one the notes belong to.
+
+    Reddit treats subreddit names case-insensitively, so ``/r/Toolbox/...``
+    and ``/r/toolbox/...`` are the same place.  An unknown subreddit (``''``)
+    matches nothing: squashing a link whose subreddit cannot be checked would
+    be guessing, and a wrong guess is a link to the wrong subreddit, which is
+    the bug this exists to prevent.
+    """
+    return bool(subreddit) and name.casefold() == subreddit.casefold()
+
+
+def _same_reddit(hostname, base_url):
+    """Whether a URL's host is the reddit those notes are stored on.
+
+    A squashed link reads back on *base_url*, so a URL elsewhere - the same
+    reddit under another name is fine (``old.reddit.com`` is the same reddit as
+    ``www.reddit.com``), a different site is not - has to be kept whole.  A
+    ``/comments/<id>`` path is no more unique to reddit than it is to one
+    subreddit of it.
+    """
+    if not base_url:
+        return True
+    base = urllib.parse.urlsplit(base_url).hostname
+    if not hostname or not base:
+        return hostname == base
+    if hostname.casefold() == base.casefold():
+        return True
+    return _is_reddit_host(hostname) and _is_reddit_host(base)
+
+
+def _is_reddit_host(hostname):
+    host = hostname.casefold()
+    return host == 'reddit.com' or host.endswith('.reddit.com')
 
 
 def _fold(value):

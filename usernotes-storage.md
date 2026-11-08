@@ -185,6 +185,24 @@ support). The regexes are deliberately loose: the comment match is
 `/\/comments\/(\w+)\/(?:[^/]+\/(?:(\w+))?)?/` and the modmail match is
 `/\/messages\/(\w+)/`.
 
+**The squashed form names no subreddit and no origin.** `l,<id>` reads back as
+`/r/<sub>/comments/<id>/` on whichever subreddit and origin the *reader* is
+using - Toolbox passes the subreddit it is displaying and prefixes
+`https://www.reddit.com` for its older links. So the form is only faithful for
+a permalink on the store's own subreddit. Toolbox's `search()`-based regexes do
+not check that: a permalink into another subreddit (`/r/other/comments/abc/`)
+is written `l,abc` and reads back as a post in the store's subreddit, which is
+normally a 404. Note also that the comment regex matches a `/comments/<id>`
+path on *any* host, so a link to a non-reddit site with such a path is squashed
+the same way.
+
+This package only squashes a permalink that names the store's own subreddit on
+its own reddit, and keeps anything else as an absolute URL, which
+`_unsquashPermalink` returns unchanged. See `usernotes.format.squash_link`. A
+whole URL is also what Toolbox's documentation recommends for legacy stores;
+the one caveat is that Toolbox re-squashes such a URL itself the next time a
+moderator saves from the browser, which no external tool can prevent.
+
 ## 7. Note types and colors (stored elsewhere)
 
 The note type key stored in `w` refers to the subreddit's general config page

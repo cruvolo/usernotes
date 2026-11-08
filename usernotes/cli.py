@@ -131,10 +131,10 @@ _NO_FLAG = ('none', '-')
 #: with a bare 403 that looks like a permissions problem.
 _SESSION_COOKIE = 'reddit_session'
 
-#: The shapes of link that survive a save: the squashed ``l,<id>`` an older
-#: store holds, and anything `usernotes.format.squash_link` can reduce.  A link
-#: that is neither is squashed to nothing on the way to the wiki, so it is
-#: refused here rather than silently dropped (see `_link`).
+#: The shapes of link that are kept as given: an absolute URL, a path, or the
+#: squashed ``l,<id>`` an older store holds.  A bare word or a title is none of
+#: these, and would reach the wiki as no link at all, so it is refused here
+#: rather than silently dropped (see `_link`).
 _SQUASHED_LINK_RE = re.compile(r'[lm],')
 _ABSOLUTE_LINK_RE = re.compile(r'https?://', re.IGNORECASE)
 
@@ -339,9 +339,14 @@ def _link(value):
 
     Only link shapes the storage format keeps are accepted: an absolute URL, a
     reddit path, or the squashed ``l,<id>`` an older store holds.  Anything
-    else - a bare word, a title - is squashed to nothing on the way to the
-    wiki, so the note would be written without the link it was given and the
-    moderator would have no way to tell; it is a usage error instead.
+    else - a bare word, a title - would reach the wiki as no link at all, so
+    the note would be written without the link it was given and the moderator
+    would have no way to tell; it is a usage error instead.
+
+    Which of the accepted shapes is *squashed* when the note is stored is not
+    decided here: that needs the subreddit, and `usernotes.format.squash_link`
+    keeps as a URL anything it cannot squash faithfully - a link to a post in
+    another subreddit, say.
     """
     link = value.strip()
     if not link:

@@ -279,7 +279,7 @@ class BuildPageTests(unittest.TestCase):
                            fmt.Note(text='two', time=1559310836000, mod='other',
                                     type='ban')],
                  'bob': [fmt.Note(text='three', time=0, mod='mod', type=None)]}
-        text = fmt.build_page(users, base_url='https://www.reddit.com')
+        text = fmt.build_page(users, subreddit='s', base_url='https://www.reddit.com')
 
         self.assertNotIn(': ', text)            # minified, no spaces
         self.assertNotIn('\n', text)
@@ -322,14 +322,24 @@ class BuildPageTests(unittest.TestCase):
                  'bob': [fmt.Note(text='with\nnewline & <tags>', time=0, mod=None, type='ban')]}
         for ver in (5, 6):
             with self.subTest(ver=ver):
-                page = fmt.parse_page(fmt.build_page(users, ver=ver), 's')
+                page = fmt.parse_page(fmt.build_page(users, ver=ver, subreddit='s'), 's')
                 self.assertEqual(page.ver, ver)
                 self.assertEqual(page.warnings, ())
                 self.assertEqual(page.users, {
                     name: tuple(notes) for name, notes in users.items()})
                 # ...and writing it again gives the same bytes.
-                rebuilt = fmt.build_page({n: list(v) for n, v in page.users.items()}, ver=ver)
-                self.assertEqual(rebuilt, fmt.build_page(users, ver=ver))
+                rebuilt = fmt.build_page({n: list(v) for n, v in page.users.items()},
+                                         ver=ver, subreddit='s')
+                self.assertEqual(rebuilt, fmt.build_page(users, ver=ver, subreddit='s'))
+
+    def test_a_link_to_another_subreddit_survives_a_round_trip_whole(self):
+        # Reading a store and writing it back must not move a link to another
+        # subreddit onto this one.
+        other = 'https://www.reddit.com/r/other/comments/a/'
+        users = {'alice': [fmt.Note(text='x', time=1559310750000, link=other)]}
+        page = fmt.parse_page(fmt.build_page(users, subreddit='s'), 's')
+        self.assertEqual(page.users['alice'][0].link, other)
+        self.assertEqual(page.users['alice'][0].link, users['alice'][0].link)
 
     def test_pools_deduplicate_a_repeated_author_and_type(self):
         users = {'a': [fmt.Note(text='1', time=1, mod='mod', type='ban'),
@@ -374,7 +384,13 @@ class TimeTests(unittest.TestCase):
 
 
 class LinkTests(unittest.TestCase):
-    """Squashing, from the table in ``usernotes-storage.md`` section 6."""
+    """Squashing, from the table in ``usernotes-storage.md`` section 6.
+
+    Squashing is only faithful when the link is a post on the store's *own*
+    subreddit on its *own* reddit: the stored form names neither, so anything
+    else has to be kept as the URL it was.  These tests pass ``subreddit=``
+    wherever that is what is being checked.
+    """
 
     def test_squashes_and_unsquashes_each_form(self):
         cases = [
@@ -387,25 +403,68 @@ class LinkTests(unittest.TestCase):
              'l,abc123', 'https://www.reddit.com/r/test/comments/abc123/'),
             ('https://www.reddit.com/r/test/message/messages/xyz789',
              'm,xyz789', 'https://www.reddit.com/r/test/message/messages/xyz789'),
+            # Old modmail as toolbox records it from its own API: no subreddit
+            # in the path, so nothing is lost by squashing it.
+            ('/message/messages/xyz789',
+             'm,xyz789', 'https://www.reddit.com/r/test/message/messages/xyz789'),
             ('https://mod.reddit.com/mail/all/abc',
              'https://mod.reddit.com/mail/all/abc',
              'https://mod.reddit.com/mail/all/abc'),
         ]
         for permalink, squashed, unsquashed in cases:
             with self.subTest(permalink=permalink):
-                self.assertEqual(fmt.squash_link(permalink), squashed)
+                self.assertEqual(fmt.squash_link(permalink, subreddit='test'), squashed)
                 self.assertEqual(fmt.unsquash_link('test', squashed), unsquashed)
+
+    def test_a_link_to_another_subreddit_keeps_pointing_there(self):
+        # The bug this guards: squashing dropped the subreddit, so a link to
+        # another subreddit read back as a post on the store's own - a 404.
+        other = ('https://old.reddit.com/r/Baofeng/comments/1xqqdf3/'
+                 'doublewy_mod_v100_a_free_noncommercial_firmware/')
+        self.assertEqual(fmt.squash_link(other, subreddit='amateurradio'), other)
+        self.assertEqual(fmt.unsquash_link('amateurradio', other), other)
+        # Naming it the same, ignoring case, is still the store's own.
+        self.assertEqual(
+            fmt.squash_link('https://www.reddit.com/r/AmateurRadio/comments/abc/',
+                            subreddit='amateurradio'),
+            'l,abc')
+
+    def test_a_url_that_is_not_reddit_is_kept_whole(self):
+        # A `/comments/<id>/` path is no more unique to reddit than to one
+        # subreddit of it, so the host has to be checked too.
+        for permalink in ('https://example.com/r/test/comments/abc/',
+                          'https://notreddit.example/r/test/comments/abc/',
+                          'https://reddit.example.com/r/test/comments/abc/'):
+            with self.subTest(permalink=permalink):
+                self.assertEqual(fmt.squash_link(permalink, subreddit='test'), permalink)
+
+    def test_a_link_without_a_known_subreddit_is_kept_whole(self):
+        # With no subreddit to check the link against, squashing it would be a
+        # guess; the URL works either way, so it is kept.
+        permalink = 'https://www.reddit.com/r/test/comments/abc/'
+        self.assertEqual(fmt.squash_link(permalink), permalink)
+        self.assertEqual(fmt.squash_link(permalink, subreddit=''), permalink)
+
+    def test_a_bare_path_that_will_not_squash_becomes_a_url(self):
+        # A path names no origin, so it is on base_url; making it absolute
+        # keeps the link, where toolbox would store '' and drop it.
+        self.assertEqual(
+            fmt.squash_link('/user/alice/comments/abc/', subreddit='test',
+                            base_url='https://old.reddit.com'),
+            'https://old.reddit.com/user/alice/comments/abc/')
+        # ...but a path that is not a path at all is not a link.
+        self.assertEqual(fmt.squash_link('somewhere over there', subreddit='test'), '')
 
     def test_keeps_legacy_urls_toolbox_would_drop(self):
         # toolbox reads an unrecognised link back as '' and so loses it on the
         # next save; this module keeps it, which is what its own docs advise.
         legacy = 'https://example.com/some/old/permalink'
-        self.assertEqual(fmt.squash_link(legacy), legacy)
+        self.assertEqual(fmt.squash_link(legacy, subreddit='test'), legacy)
         self.assertEqual(fmt.unsquash_link('test', legacy), legacy)
 
     def test_no_link(self):
         for value in ('', None):
-            self.assertEqual(fmt.squash_link(value), '')
+            self.assertEqual(fmt.squash_link(value, subreddit='test'), '')
             self.assertEqual(fmt.unsquash_link('test', value), '')
 
     def test_unrecognised_values_become_no_link(self):
@@ -421,8 +480,24 @@ class LinkTests(unittest.TestCase):
         self.assertEqual(
             fmt.unsquash_link('test', 'l,abc', base_url='https://old.reddit.com'),
             'https://old.reddit.com/r/test/comments/abc/')
+        # reddit's front ends are one reddit, so a link on any of them squashes
+        # and reads back on base_url.
+        for host in ('old.reddit.com', 'www.reddit.com', 'new.reddit.com'):
+            with self.subTest(host=host):
+                self.assertEqual(
+                    fmt.squash_link(f'https://{host}/r/test/comments/abc/',
+                                    subreddit='test', base_url='https://old.reddit.com'),
+                    'l,abc')
+        # ...but a link on a reddit that is not base_url at all is kept whole.
         self.assertEqual(
-            fmt.squash_link('https://old.reddit.com/r/test/comments/abc/'),
+            fmt.squash_link('https://reddit.example/r/test/comments/abc/',
+                            subreddit='test', base_url='https://old.reddit.com'),
+            'https://reddit.example/r/test/comments/abc/')
+
+    def test_a_relative_path_is_on_the_configured_reddit(self):
+        self.assertEqual(
+            fmt.squash_link('/r/test/comments/abc/', subreddit='test',
+                            base_url='https://old.reddit.com'),
             'l,abc')
 
 

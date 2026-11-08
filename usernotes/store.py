@@ -651,6 +651,7 @@ class UsernotesStore:
                            'with no notes')
 
         content = build_page(self._users.as_dict(), ver=NOTES_SCHEMA,
+                             subreddit=self.subreddit,
                              base_url=self.client.base_url)
         self.client.write_page(self.subreddit, self.page, content,
                                reason=_with_provenance(self._reason(reason)))

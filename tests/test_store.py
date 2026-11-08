@@ -314,6 +314,30 @@ class AddTests(StoreTestCase):
         with self.assertRaises(ValueError):
             store.add('alice', 'y', link=17)
 
+    def test_a_link_to_another_subreddit_keeps_its_subreddit(self):
+        # The store's subreddit is not the link's, so the link may not be
+        # squashed - doing so read it back as a post on /r/test, a 404.
+        other = ('https://old.reddit.com/r/Baofeng/comments/1xqqdf3/'
+                 'doublewy_mod_v100_a_free_noncommercial_firmware/')
+        store = self.store.load()
+        store.add('alice', 'a post elsewhere', link=other)
+        store.save()
+        store.reload()
+
+        note = store.notes('alice')[0]
+        self.assertEqual(note.link, other)
+        # And what landed on the wiki is the link itself, not a squashed id.
+        saved = fmt.decompress_blob(self.saved_page()['blob'])['alice']['ns'][0]
+        self.assertEqual(saved['l'], other)
+
+    def test_a_link_to_its_own_subreddit_is_still_squashed(self):
+        store = self.store.load()
+        store.add('alice', 'a post here',
+                  link=f'{self.reddit.base_url}/r/test/comments/abc/title/')
+        store.save()
+        saved = fmt.decompress_blob(self.saved_page()['blob'])['alice']['ns'][0]
+        self.assertEqual(saved['l'], 'l,abc')
+
     def test_notes_can_be_imported_with_their_own_timestamps(self):
         store = self.store.load()
         note = store.add('alice', 'from an importer', time=1559310750123)

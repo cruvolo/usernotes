@@ -92,6 +92,14 @@ with no flag at all.
 it comes back as a clickable URL in the listing.  `--url` is the same option,
 for when the thing it names is a URL; give either one.
 
+A link to a post in the subreddit being written is stored the same compact way
+toolbox stores it, and comes back as the URL it was.  A link anywhere else -
+another subreddit, another reddit, another site - is kept as the URL you gave:
+that compact form records no subreddit, so storing a cross-subreddit link that
+way would make it read back as a post in the subreddit's own, which is a 404.
+Toolbox shows no link behind a note stored that way; the link itself is still
+there, and is what `usernotes read --json` prints.
+
 The note is recorded against the account whose cookies were used, and the whole
 wiki page is rewritten, because the format has no smaller unit.  If another
 moderator saved notes in the meantime, the write is refused rather than

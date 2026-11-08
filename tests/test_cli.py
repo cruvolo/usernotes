@@ -396,6 +396,30 @@ class AddTests(CliTestCase):
         note = fmt.decompress_blob(stored['blob'])['alice']['ns'][0]
         self.assertEqual(note['l'], 'l,abc123')
 
+    def test_a_link_to_another_subreddit_is_kept_whole(self):
+        # A note on /r/test about a post in /r/other: squashing it would drop
+        # the subreddit and read back as a /r/test post that does not exist.
+        # The origin here is the store's own, so this is the subreddit check
+        # itself and not just a different reddit.
+        link = f'{self.reddit.base_url}/r/Baofeng/comments/1xqqdf3/' \
+               'doublewy_mod_v100_a_free_noncommercial_firmware/'
+        status, out, _ = self.add(SUBREDDIT, 'alice', 'about that post',
+                                  '--flag', 'ban', '--link', link)
+        self.assertEqual(status, EXIT_OK)
+        self.assertIn(link, out)                    # shown as it was given
+        stored = json.loads(self.reddit.page(SUBREDDIT))
+        note = fmt.decompress_blob(stored['blob'])['alice']['ns'][0]
+        self.assertEqual(note['l'], link)            # and stored as given
+
+    def test_a_link_on_another_reddit_is_kept_whole(self):
+        link = 'https://old.reddit.com/r/test/comments/abc123/'
+        status, out, _ = self.add(SUBREDDIT, 'alice', 'about that post',
+                                  '--flag', 'ban', '--link', link)
+        self.assertEqual(status, EXIT_OK)
+        stored = json.loads(self.reddit.page(SUBREDDIT))
+        note = fmt.decompress_blob(stored['blob'])['alice']['ns'][0]
+        self.assertEqual(note['l'], link)
+
     def test_url_names_the_same_option_as_link(self):
         # `--url` is `--link` by another name, so it writes the same note field
         # and goes through the same check on what a link can be.
